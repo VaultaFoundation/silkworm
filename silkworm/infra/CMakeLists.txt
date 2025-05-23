@@ -14,29 +14,21 @@
    limitations under the License.
 ]]
 
+include("${SILKWORM_MAIN_DIR}/cmake/common/targets.cmake")
+
 find_package(absl REQUIRED)
 find_package(asio-grpc REQUIRED)
-find_package(Boost REQUIRED container thread)
+find_package(Boost REQUIRED COMPONENTS headers container thread)
+find_package(Catch2 REQUIRED)
 find_package(gRPC REQUIRED)
+find_package(GTest REQUIRED)
 find_package(magic_enum REQUIRED)
-
-file(GLOB_RECURSE SRC CONFIGURE_DEPENDS "*.cpp" "*.hpp")
-list(FILTER SRC EXCLUDE REGEX "_test\\.cpp$")
-list(FILTER SRC EXCLUDE REGEX "_benchmark\\.cpp$")
-
-add_library(silkworm_infra "${SRC}")
-
-# Suppress ASAN/TSAN in gRPC to avoid ODR violation when building Silkworm with sanitizers See
-# https://github.com/grpc/grpc/issues/19224
-if(SILKWORM_SANITIZE)
-  target_compile_definitions(silkworm_infra PRIVATE GRPC_ASAN_SUPPRESSED GRPC_TSAN_SUPPRESSED)
-endif()
-
-target_include_directories(silkworm_infra PUBLIC "${SILKWORM_MAIN_DIR}")
+find_package(spdlog REQUIRED)
 
 set(LIBS_PUBLIC
     silkworm_core
     silkworm_interfaces
+    absl::log
     absl::strings
     asio-grpc::asio-grpc
     Boost::headers
@@ -49,14 +41,22 @@ set(LIBS_PRIVATE
     absl::time
     Boost::container # required for asio-grpc
     magic_enum::magic_enum
+    spdlog::spdlog
+    silkworm-buildinfo
 )
 # cmake-format: on
-if(MSVC)
-  list(APPEND LIBS_PRIVATE ntdll.lib)
-endif(MSVC)
 
-target_link_libraries(
+silkworm_library(
   silkworm_infra
-  PUBLIC "${LIBS_PUBLIC}"
-  PRIVATE "${LIBS_PRIVATE}"
+  PUBLIC ${LIBS_PUBLIC}
+  PRIVATE ${LIBS_PRIVATE}
 )
+
+# silkworm_infra_cli depends on silkworm_infra
+add_subdirectory(cli)
+
+# silkworm_infra_test_util depends on silkworm_infra
+add_subdirectory(test_util)
+
+# unit tests
+target_link_libraries(silkworm_infra_test PRIVATE GTest::gmock silkworm_infra_test_util)

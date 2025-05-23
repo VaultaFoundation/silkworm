@@ -18,16 +18,25 @@
 
 #include <stdexcept>
 
+#include <silkworm/core/common/empty_hashes.hpp>
 #include <silkworm/core/trie/nibbles.hpp>
 #include <silkworm/core/types/account.hpp>
+#include <silkworm/db/state/account_codec.hpp>
+#include <silkworm/db/tables.hpp>
 #include <silkworm/infra/common/decoding_exception.hpp>
 #include <silkworm/infra/concurrency/signal_handler.hpp>
-#include <silkworm/node/db/tables.hpp>
 
 namespace silkworm::trie {
 
-TrieLoader::TrieLoader(db::ROTxn& txn, PrefixSet* account_changes, PrefixSet* storage_changes,
-                       etl::Collector* account_trie_node_collector, etl::Collector* storage_trie_node_collector)
+using namespace silkworm::db;
+using namespace silkworm::datastore::kvdb;
+
+TrieLoader::TrieLoader(
+    ROTxn& txn,
+    PrefixSet* account_changes,
+    PrefixSet* storage_changes,
+    datastore::etl::Collector* account_trie_node_collector,
+    datastore::etl::Collector* storage_trie_node_collector)
     : txn_{txn},
       account_changes_{account_changes},
       storage_changes_{storage_changes},
@@ -46,22 +55,22 @@ evmc::bytes32 TrieLoader::calculate_root() {
     using namespace std::chrono_literals;
     auto log_time{std::chrono::steady_clock::now()};
 
-    auto hashed_accounts = txn_.ro_cursor(db::table::kHashedAccounts);
-    auto hashed_storage = txn_.ro_cursor_dup_sort(db::table::kHashedStorage);
-    auto trie_accounts = txn_.ro_cursor(db::table::kTrieOfAccounts);
-    auto trie_storage = txn_.ro_cursor(db::table::kTrieOfStorage);
+    auto hashed_accounts = txn_.ro_cursor(table::kHashedAccounts);
+    auto hashed_storage = txn_.ro_cursor_dup_sort(table::kHashedStorage);
+    auto trie_accounts = txn_.ro_cursor(table::kTrieOfAccounts);
+    auto trie_storage = txn_.ro_cursor(table::kTrieOfStorage);
 
     // On full regeneration we must assert both trees are empty
     if (!account_changes_) {
         if (!trie_accounts->empty() || !trie_storage->empty()) {
             throw std::domain_error(" full regeneration detected but either " +
-                                    std::string(db::table::kTrieOfAccounts.name) + " or " +
-                                    std::string(db::table::kTrieOfStorage.name) + " aren't empty");
+                                    std::string(table::kTrieOfAccounts.name) + " or " +
+                                    std::string(table::kTrieOfStorage.name) + " aren't empty");
         }
     }
 
     Bytes storage_prefix_buffer{};
-    storage_prefix_buffer.reserve(db::kHashedStoragePrefixLength);
+    storage_prefix_buffer.reserve(kHashedStoragePrefixLength);
 
     HashBuilder account_hash_builder;
     account_hash_builder.node_collector = [&](ByteView nibbled_key, const trie::Node& node) {
@@ -85,16 +94,16 @@ evmc::bytes32 TrieLoader::calculate_root() {
     auto trie_account_data{trie_account_cursor.to_prefix({})};
     while (true) {
         if (trie_account_data.first_uncovered.has_value()) {
-            auto hashed_account_seek_slice{db::to_slice(trie_account_data.first_uncovered.value())};
+            auto hashed_account_seek_slice{to_slice(trie_account_data.first_uncovered.value())};
             auto hashed_account_data{hashed_account_seek_slice.empty()
                                          ? hashed_accounts->to_first(false)
                                          : hashed_accounts->lower_bound(hashed_account_seek_slice, false)};
             while (hashed_account_data) {
-                auto hashed_account_data_key_view{db::from_slice(hashed_account_data.key)};
+                auto hashed_account_data_key_view{from_slice(hashed_account_data.key)};
 
                 if (const auto now{std::chrono::steady_clock::now()}; log_time <= now) {
                     SignalHandler::throw_if_signalled();
-                    std::unique_lock log_lck(log_mtx_);
+                    std::scoped_lock log_lck(log_mtx_);
                     log_key_ = to_hex(hashed_account_data_key_view, true);
                     log_time = now + 2s;
                 }
@@ -106,13 +115,13 @@ evmc::bytes32 TrieLoader::calculate_root() {
                 }
 
                 // Retrieve account data
-                const auto account{Account::from_encoded_storage(db::from_slice(hashed_account_data.value))};
+                const auto account = db::state::AccountCodec::from_encoded_storage(from_slice(hashed_account_data.value));
                 success_or_throw(account);
 
                 evmc::bytes32 storage_root{kEmptyRoot};
                 if (account->incarnation) {
                     // Calc storage root
-                    storage_prefix_buffer.assign(db::storage_prefix(hashed_account_data_key_view, account->incarnation));
+                    storage_prefix_buffer.assign(storage_prefix(hashed_account_data_key_view, account->incarnation));
                     storage_root = calculate_storage_root(trie_storage_cursor, storage_hash_builder, *hashed_storage,
                                                           storage_prefix_buffer);
                 }
@@ -144,17 +153,17 @@ evmc::bytes32 TrieLoader::calculate_root() {
 }
 
 evmc::bytes32 TrieLoader::calculate_storage_root(TrieCursor& trie_storage_cursor, HashBuilder& storage_hash_builder,
-                                                 db::ROCursorDupSort& hashed_storage, const Bytes& db_storage_prefix) {
+                                                 ROCursorDupSort& hashed_storage, const Bytes& db_storage_prefix) {
     using namespace std::chrono_literals;
     auto log_time{std::chrono::steady_clock::now()};
 
     static Bytes rlp_buffer{};
 
-    const auto db_storage_prefix_slice{db::to_slice(db_storage_prefix)};
+    const auto db_storage_prefix_slice{to_slice(db_storage_prefix)};
     auto trie_storage_data{trie_storage_cursor.to_prefix(db_storage_prefix)};
     while (true) {
         if (trie_storage_data.first_uncovered.has_value()) {
-            const auto prefix_slice{db::to_slice(trie_storage_data.first_uncovered.value())};
+            const auto prefix_slice{to_slice(trie_storage_data.first_uncovered.value())};
             auto hashed_storage_data{
                 hashed_storage.lower_bound_multivalue(db_storage_prefix_slice, prefix_slice, false)};
 
@@ -163,7 +172,7 @@ evmc::bytes32 TrieLoader::calculate_storage_root(TrieCursor& trie_storage_cursor
                     SignalHandler::throw_if_signalled();
                 }
 
-                auto hashed_storage_data_value_view{db::from_slice(hashed_storage_data.value)};
+                auto hashed_storage_data_value_view{from_slice(hashed_storage_data.value)};
                 const auto nibbled_location{
                     trie::unpack_nibbles(hashed_storage_data_value_view.substr(0, kHashLength))};
                 if (trie_storage_data.key.has_value() && trie_storage_data.key.value() < nibbled_location) {

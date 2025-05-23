@@ -21,23 +21,25 @@
 #include <string_view>
 
 #include <silkworm/core/common/base.hpp>
+#include <silkworm/core/common/bytes.hpp>
+#include <silkworm/core/common/bytes_to_string.hpp>
 
-namespace silkworm::sentry::common {
+namespace silkworm::sentry {
 
 class EccPublicKey {
   public:
     explicit EccPublicKey(Bytes data) : data_(std::move(data)) {}
 
-    [[nodiscard]] ByteView data() const { return data_; }
-    [[nodiscard]] Bytes::size_type size() const { return data_.size(); }
+    ByteView data() const { return data_; }
+    Bytes::size_type size() const { return data_.size(); }
 
-    [[nodiscard]] Bytes serialized_std() const;
-    [[nodiscard]] Bytes serialized() const;
-    [[nodiscard]] std::string hex() const;
+    Bytes serialized_std(bool is_compressed = false) const;
+    Bytes serialized() const;
+    std::string hex() const;
 
-    [[nodiscard]] static EccPublicKey deserialize_std(ByteView serialized_data);
-    [[nodiscard]] static EccPublicKey deserialize(ByteView serialized_data);
-    [[nodiscard]] static EccPublicKey deserialize_hex(std::string_view hex);
+    static EccPublicKey deserialize_std(ByteView serialized_data);
+    static EccPublicKey deserialize(ByteView serialized_data);
+    static EccPublicKey deserialize_hex(std::string_view hex);
 
     friend bool operator==(const EccPublicKey&, const EccPublicKey&) = default;
 
@@ -48,16 +50,15 @@ class EccPublicKey {
 //! for using EccPublicKey as a key of std::map
 bool operator<(const EccPublicKey& lhs, const EccPublicKey& rhs);
 
-}  // namespace silkworm::sentry::common
+}  // namespace silkworm::sentry
 
 namespace std {
 
 //! for using EccPublicKey as a key of std::unordered_map
 template <>
-struct hash<silkworm::sentry::common::EccPublicKey> {
-    size_t operator()(const silkworm::sentry::common::EccPublicKey& public_key) const noexcept {
-        silkworm::ByteView data = public_key.data();
-        std::string_view data_str{reinterpret_cast<const char*>(data.data()), data.size()};
+struct hash<silkworm::sentry::EccPublicKey> {
+    size_t operator()(const silkworm::sentry::EccPublicKey& public_key) const noexcept {
+        auto data_str = silkworm::byte_view_to_string_view(public_key.data());
         return std::hash<std::string_view>{}(data_str);
     }
 };

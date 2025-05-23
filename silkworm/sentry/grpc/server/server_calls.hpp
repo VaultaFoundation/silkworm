@@ -28,12 +28,11 @@
 #include <silkworm/core/common/base.hpp>
 #include <silkworm/infra/common/log.hpp>
 #include <silkworm/infra/concurrency/awaitable_future.hpp>
-#include <silkworm/infra/grpc/interfaces/types.hpp>
 #include <silkworm/infra/grpc/server/call.hpp>
-#include <silkworm/sentry/api/api_common/message_id_set.hpp>
-#include <silkworm/sentry/api/api_common/node_info.hpp>
-#include <silkworm/sentry/api/api_common/peer_event.hpp>
-#include <silkworm/sentry/api/api_common/peer_info.hpp>
+#include <silkworm/sentry/api/common/message_id_set.hpp>
+#include <silkworm/sentry/api/common/node_info.hpp>
+#include <silkworm/sentry/api/common/peer_event.hpp>
+#include <silkworm/sentry/api/common/peer_info.hpp>
 #include <silkworm/sentry/api/router/messages_call.hpp>
 #include <silkworm/sentry/api/router/peer_call.hpp>
 #include <silkworm/sentry/api/router/peer_events_call.hpp>
@@ -52,7 +51,6 @@
 
 namespace silkworm::sentry::grpc::server {
 
-using boost::asio::io_context;
 namespace protobuf = google::protobuf;
 namespace proto = ::sentry;
 namespace proto_types = ::types;
@@ -99,10 +97,10 @@ class NodeInfoCall : public sw_rpc::server::UnaryCall<protobuf::Empty, proto_typ
     }
 };
 
-Task<proto::SentPeers> do_send_message_call(
+inline Task<proto::SentPeers> do_send_message_call(
     const ServiceRouter& router,
     const proto::OutboundMessageData& request,
-    api::api_common::PeerFilter peer_filter) {
+    api::PeerFilter peer_filter) {
     auto message = interfaces::message_from_outbound_data(request);
 
     auto executor = co_await boost::asio::this_coro::executor;
@@ -126,7 +124,7 @@ class SendMessageByIdCall : public sw_rpc::server::UnaryCall<proto::SendMessageB
         proto::SentPeers reply = co_await do_send_message_call(
             router,
             request_.data(),
-            api::api_common::PeerFilter::with_peer_public_key(peer_public_key));
+            api::PeerFilter::with_peer_public_key(peer_public_key));
         co_await agrpc::finish(responder_, reply, ::grpc::Status::OK);
     }
 };
@@ -140,7 +138,7 @@ class SendMessageToRandomPeersCall : public sw_rpc::server::UnaryCall<proto::Sen
         proto::SentPeers reply = co_await do_send_message_call(
             router,
             request_.data(),
-            api::api_common::PeerFilter::with_max_peers(request_.max_peers()));
+            api::PeerFilter::with_max_peers(request_.max_peers()));
         co_await agrpc::finish(responder_, reply, ::grpc::Status::OK);
     }
 };
@@ -151,7 +149,7 @@ class SendMessageToAllCall : public sw_rpc::server::UnaryCall<proto::OutboundMes
     using Base::UnaryCall;
 
     Task<void> operator()(const ServiceRouter& router) {
-        proto::SentPeers reply = co_await do_send_message_call(router, request_, api::api_common::PeerFilter{});
+        proto::SentPeers reply = co_await do_send_message_call(router, request_, api::PeerFilter{});
         co_await agrpc::finish(responder_, reply, ::grpc::Status::OK);
     }
 };
@@ -166,7 +164,7 @@ class SendMessageByMinBlockCall : public sw_rpc::server::UnaryCall<proto::SendMe
         proto::SentPeers reply = co_await do_send_message_call(
             router,
             request_.data(),
-            api::api_common::PeerFilter::with_max_peers(request_.max_peers()));
+            api::PeerFilter::with_max_peers(request_.max_peers()));
         co_await agrpc::finish(responder_, reply, ::grpc::Status::OK);
     }
 };
@@ -198,7 +196,7 @@ class MessagesCall : public sw_rpc::server::ServerStreamingCall<proto::MessagesR
         };
 
         auto unsubscribe_signal = call.unsubscribe_signal();
-        auto _ = gsl::finally([=]() { unsubscribe_signal->notify(); });
+        [[maybe_unused]] auto _ = gsl::finally([=]() { unsubscribe_signal->notify(); });
 
         co_await router.message_calls_channel.send(call);
         auto messages_channel = co_await call.result();
@@ -226,7 +224,7 @@ class PeersCall : public sw_rpc::server::UnaryCall<protobuf::Empty, proto::Peers
 
     Task<void> operator()(const ServiceRouter& router) {
         auto executor = co_await boost::asio::this_coro::executor;
-        auto call = std::make_shared<concurrency::AwaitablePromise<api::api_common::PeerInfos>>(executor);
+        auto call = std::make_shared<concurrency::AwaitablePromise<api::PeerInfos>>(executor);
         auto call_future = call->get_future();
 
         co_await router.peers_calls_channel.send(call);
@@ -302,7 +300,7 @@ class PeerEventsCall : public sw_rpc::server::ServerStreamingCall<proto::PeerEve
         auto call_future = call.result_promise->get_future();
 
         auto unsubscribe_signal = call.unsubscribe_signal;
-        auto _ = gsl::finally([=]() { unsubscribe_signal->notify(); });
+        [[maybe_unused]] auto _ = gsl::finally([=]() { unsubscribe_signal->notify(); });
 
         co_await router.peer_events_calls_channel.send(call);
         auto events_channel = co_await call_future.get_async();

@@ -22,6 +22,8 @@
 #include <vector>
 
 #include <silkworm/core/common/base.hpp>
+#include <silkworm/core/common/bytes.hpp>
+#include <silkworm/core/common/bytes_to_string.hpp>
 #include <silkworm/sentry/common/ecc_public_key.hpp>
 #include <silkworm/sentry/common/message.hpp>
 
@@ -35,17 +37,17 @@ class HelloMessage {
         Capability(
             std::string_view name,
             uint8_t version1)
-            : name_bytes(reinterpret_cast<const uint8_t*>(name.data()), name.size()),
+            : name_bytes(string_view_to_byte_view(name)),
               version(version1) {}
 
         explicit Capability(const std::pair<std::string, uint8_t>& info)
             : Capability(info.first, info.second) {}
 
-        [[nodiscard]] std::string_view name() const {
-            return {reinterpret_cast<const char*>(name_bytes.data()), name_bytes.size()};
+        std::string_view name() const {
+            return byte_view_to_string_view(name_bytes);
         }
 
-        [[nodiscard]] std::string to_string() const;
+        std::string to_string() const;
 
         Bytes name_bytes;
         uint8_t version{0};
@@ -57,33 +59,33 @@ class HelloMessage {
         std::string_view client_id,
         std::vector<Capability> capabilities,
         uint16_t listen_port,
-        const common::EccPublicKey& node_id)
-        : client_id_bytes_(reinterpret_cast<const uint8_t*>(client_id.data()), client_id.size()),
+        const EccPublicKey& node_id)
+        : client_id_bytes_(string_view_to_byte_view(client_id)),
           capabilities_(std::move(capabilities)),
           listen_port_(listen_port),
           node_id_bytes_(node_id.serialized()) {}
 
-    [[nodiscard]] std::string_view client_id() const {
-        return {reinterpret_cast<const char*>(client_id_bytes_.data()), client_id_bytes_.size()};
+    std::string_view client_id() const {
+        return byte_view_to_string_view(client_id_bytes_);
     }
 
-    [[nodiscard]] const std::vector<Capability>& capabilities() const { return capabilities_; }
+    const std::vector<Capability>& capabilities() const { return capabilities_; }
 
-    [[nodiscard]] bool contains_capability(const Capability& capability) const;
+    bool contains_capability(const Capability& capability) const;
 
-    [[nodiscard]] std::string capabilities_description();
+    std::string capabilities_description();
 
-    [[nodiscard]] uint16_t listen_port() const { return listen_port_; }
+    uint16_t listen_port() const { return listen_port_; }
 
-    [[nodiscard]] common::EccPublicKey node_id() const {
-        return common::EccPublicKey::deserialize(node_id_bytes_);
+    EccPublicKey node_id() const {
+        return EccPublicKey::deserialize(node_id_bytes_);
     }
 
-    [[nodiscard]] Bytes rlp_encode() const;
-    [[nodiscard]] static HelloMessage rlp_decode(ByteView data);
+    Bytes rlp_encode() const;
+    static HelloMessage rlp_decode(ByteView data);
 
-    [[nodiscard]] common::Message to_message() const;
-    [[nodiscard]] static HelloMessage from_message(const common::Message& message);
+    Message to_message() const;
+    static HelloMessage from_message(const Message& message);
 
     static const uint8_t kId;
     static const uint8_t kProtocolVersion;

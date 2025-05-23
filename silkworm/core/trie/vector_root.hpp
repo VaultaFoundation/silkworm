@@ -16,7 +16,8 @@
 
 #pragma once
 
-//#include <concepts>
+#include <concepts>
+#include <functional>
 
 #include <silkworm/core/rlp/encode.hpp>
 #include <silkworm/core/trie/hash_builder.hpp>
@@ -29,17 +30,17 @@ namespace silkworm::trie {
 inline size_t adjust_index_for_rlp(size_t i, size_t len) {
     if (i > 0x7f) {
         return i;
-    } else if (i == 0x7f || i + 1 == len) {
-        return 0;
-    } else {
-        return i + 1;
     }
+    if (i == 0x7f || i + 1 == len) {
+        return 0;
+    }
+    return i + 1;
 }
 
 // Trie root hash of RLP-encoded values, the keys are RLP-encoded integers.
 // See Section 4.3.2. "Holistic Validity" of the Yellow Paper.
-template <class Value, typename Encoder>
-evmc::bytes32 root_hash(const std::vector<Value>& v, Encoder&& value_encoder) {
+template <class Value, std::invocable<Bytes&, const Value&> Encoder>
+evmc::bytes32 root_hash(const std::vector<Value>& v, const Encoder& value_encoder) {
     Bytes index_rlp;
     Bytes value_rlp;
 
@@ -50,7 +51,7 @@ evmc::bytes32 root_hash(const std::vector<Value>& v, Encoder&& value_encoder) {
         index_rlp.clear();
         rlp::encode(index_rlp, index);
         value_rlp.clear();
-        value_encoder(value_rlp, v[index]);
+        std::invoke(value_encoder, value_rlp, v[index]);
 
         hb.add_leaf(unpack_nibbles(index_rlp), value_rlp);
     }

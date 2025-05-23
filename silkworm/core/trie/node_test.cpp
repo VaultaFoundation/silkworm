@@ -19,11 +19,13 @@
 #include <bit>
 #include <utility>
 
-#include <catch2/catch.hpp>
+#include <catch2/catch_test_macros.hpp>
 
 #include <silkworm/core/common/util.hpp>
 
 namespace silkworm::trie {
+
+using namespace evmc::literals;
 
 TEST_CASE("Node marshalling") {
     Node n{/*state_mask*/ 0xf607,

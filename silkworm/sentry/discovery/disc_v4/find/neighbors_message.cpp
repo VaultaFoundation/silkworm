@@ -23,17 +23,15 @@
 #include <silkworm/core/rlp/encode_vector.hpp>
 #include <silkworm/infra/common/decoding_exception.hpp>
 #include <silkworm/infra/common/unix_timestamp.hpp>
-#include <silkworm/sentry/discovery/disc_v4/disc_v4_common/packet_type.hpp>
+#include <silkworm/sentry/discovery/disc_v4/common/packet_type.hpp>
 
 namespace silkworm::sentry::discovery::disc_v4::find {
-
-using namespace disc_v4_common;
 
 const uint8_t NeighborsMessage::kId = static_cast<uint8_t>(PacketType::kNeighbors);
 
 struct NeighborsNodeInfo {
     NodeAddress address;
-    common::EccPublicKey public_key{Bytes{}};
+    EccPublicKey public_key{Bytes{}};
 };
 
 //! RLP length of NeighborsNodeInfo
@@ -51,7 +49,7 @@ void encode(Bytes& to, const NeighborsNodeInfo& info) {
 //! RLP decode NeighborsNodeInfo
 DecodingResult decode(ByteView& from, NeighborsNodeInfo& to, rlp::Leftover mode) noexcept {
     Bytes ip_bytes;
-    uint16_t port;
+    uint16_t port{0};
     Bytes public_key_data;
     auto result = rlp::decode(from, mode, ip_bytes, port, to.address.port_rlpx, public_key_data);
     if (!result) {
@@ -66,7 +64,7 @@ DecodingResult decode(ByteView& from, NeighborsNodeInfo& to, rlp::Leftover mode)
     to.address.endpoint = boost::asio::ip::udp::endpoint(*ip, port);
 
     try {
-        to.public_key = common::EccPublicKey::deserialize(public_key_data);
+        to.public_key = EccPublicKey::deserialize(public_key_data);
     } catch (const std::runtime_error&) {
         return tl::unexpected{DecodingError::kUnexpectedString};
     }
@@ -90,7 +88,7 @@ Bytes NeighborsMessage::rlp_encode() const {
 
 NeighborsMessage NeighborsMessage::rlp_decode(ByteView data) {
     std::vector<NeighborsNodeInfo> node_infos;
-    uint64_t expiration_ts;
+    uint64_t expiration_ts{0};
 
     auto result = rlp::decode(
         data,
@@ -101,7 +99,7 @@ NeighborsMessage NeighborsMessage::rlp_decode(ByteView data) {
         throw DecodingException(result.error(), "Failed to decode NeighborsMessage RLP");
     }
 
-    std::map<common::EccPublicKey, disc_v4_common::NodeAddress> node_addresses;
+    std::map<EccPublicKey, NodeAddress> node_addresses;
     for (auto& info : node_infos) {
         node_addresses[info.public_key] = info.address;
     }

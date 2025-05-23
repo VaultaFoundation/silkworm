@@ -70,9 +70,10 @@ ServerImpl::ServerImpl(
     ServiceRouter router)
     : silkworm::rpc::Server(config),
       router_(std::move(router)) {
-    log::Info("sentry") << "rpc::Server created"
-                        << " to listen on: " << config.address_uri << ";"
-                        << " contexts: " << config.context_pool_settings.num_contexts;
+    SILK_INFO_M("sentry")
+        << "rpc::Server created"
+        << " to listen on: " << config.address_uri << ";"
+        << " contexts: " << config.context_pool_settings.num_contexts;
 }
 
 // Register the gRPC services: they must exist for the lifetime of the server built by builder.
@@ -82,7 +83,7 @@ void ServerImpl::register_async_services(::grpc::ServerBuilder& builder) {
 
 //! Start server-side RPC requests as required by gRPC async model: one RPC per type is requested in advance.
 void ServerImpl::register_request_calls() {
-    for (std::size_t i = 0; i < num_contexts(); i++) {
+    for (size_t i = 0; i < num_contexts(); ++i) {
         const auto& context = next_context();
         register_request_calls(context.server_grpc_context());
     }
@@ -113,11 +114,11 @@ Server::Server(
     : p_impl_(std::make_unique<ServerImpl>(config, std::move(router))) {}
 
 Server::~Server() {
-    log::Trace("sentry") << "silkworm::sentry::grpc::server::Server::~Server";
+    SILK_TRACE_M("sentry") << "silkworm::sentry::grpc::server::Server::~Server";
 }
 
 Task<void> Server::async_run() {
-    return p_impl_->async_run();
+    return p_impl_->async_run("sentry-gsrv");
 }
 
 }  // namespace silkworm::sentry::grpc::server

@@ -1,5 +1,5 @@
 /*
-   Copyright 2020 The Silkrpc Authors
+   Copyright 2020 The Silkworm Authors
 
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
@@ -22,33 +22,36 @@
 #include <absl/flags/flag.h>
 #include <absl/flags/parse.h>
 #include <absl/flags/usage.h>
+#include <absl/strings/match.h>
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/io_context.hpp>
-#include <boost/asio/use_awaitable.hpp>
 #include <boost/asio/use_future.hpp>
 #include <grpcpp/grpcpp.h>
-#include <silkworm/core/common/util.hpp>
 
+#include <silkworm/db/kv/api/state_cache.hpp>
+#include <silkworm/db/kv/grpc/client/remote_client.hpp>
 #include <silkworm/infra/common/log.hpp>
 #include <silkworm/infra/grpc/client/client_context_pool.hpp>
-#include <silkworm/silkrpc/common/constants.hpp>
-#include <silkworm/silkrpc/core/blocks.hpp>
-#include <silkworm/silkrpc/ethdb/transaction_database.hpp>
-#include <silkworm/silkrpc/ethdb/kv/remote_database.hpp>
+#include <silkworm/rpc/common/constants.hpp>
+#include <silkworm/rpc/core/block_reader.hpp>
+#include <silkworm/rpc/ethbackend/remote_backend.hpp>
+#include <silkworm/rpc/ethdb/kv/backend_providers.hpp>
 
 using namespace silkworm;
+using namespace silkworm::db;
 using namespace silkworm::rpc;
 
 ABSL_FLAG(std::string, target, kDefaultPrivateApiAddr, "server location as string <address>:<port>");
 // ABSL_FLAG(LogLevel, log_verbosity, LogLevel::Critical, "logging level");
 
-boost::asio::awaitable<std::optional<uint64_t>> latest_block(ethdb::Database& db) {
-    std::optional<uint64_t> block_height;
+Task<std::optional<uint64_t>> latest_block(db::kv::api::Service& service) {
+    std::optional<uint64_t> block_num;
 
-    const auto db_transaction = co_await db.begin();
+    const auto db_transaction = co_await service.begin_transaction();
     try {
-        ethdb::TransactionDatabase tx_db_reader{*db_transaction};
-        block_height = co_await core::get_latest_block_number(tx_db_reader);
+        const auto chain_storage{db_transaction->create_storage()};
+        rpc::BlockReader block_reader{*chain_storage, *db_transaction};
+        block_num = co_await block_reader.get_latest_block_num();
     } catch (const std::exception& e) {
         SILK_ERROR << "exception: " << e.what();
     } catch (...) {
@@ -56,16 +59,16 @@ boost::asio::awaitable<std::optional<uint64_t>> latest_block(ethdb::Database& db
     }
     co_await db_transaction->close();
 
-    co_return block_height;
+    co_return block_num;
 }
 
-std::optional<uint64_t> get_latest_block(boost::asio::io_context& io_context, ethdb::Database& db) {
+std::optional<uint64_t> get_latest_block(boost::asio::io_context& ioc, db::kv::api::Service& service) {
     auto result = boost::asio::co_spawn(
-        io_context,
-        [&]() -> boost::asio::awaitable<std::optional<uint64_t>> {
-            const auto block_number = co_await latest_block(db);
-            io_context.stop();
-            co_return block_number;
+        ioc,
+        [&]() -> Task<std::optional<uint64_t>> {
+            const auto block_num = co_await latest_block(service);
+            ioc.stop();
+            co_return block_num;
         },
         boost::asio::use_future);
     return result.get();
@@ -79,7 +82,7 @@ int main(int argc, char* argv[]) {
 
     try {
         auto target{absl::GetFlag(FLAGS_target)};
-        if (target.empty() || target.find(":") == std::string::npos) {
+        if (target.empty() || !absl::StrContains(target, ":")) {
             std::cerr << "Parameter target is invalid: [" << target << "]\n";
             std::cerr << "Use --target flag to specify the location of Silkworm/Erigon running instance\n";
             return -1;
@@ -92,25 +95,29 @@ int main(int argc, char* argv[]) {
         // TODO(canepat): handle also local (shared-memory) database
         ClientContextPool context_pool{1};
         auto& context = context_pool.next_context();
-        auto io_context = context.io_context();
+        auto* ioc = context.ioc();
+        auto& grpc_context = *context.grpc_context();
 
-        auto channel{::grpc::CreateChannel(target, ::grpc::InsecureChannelCredentials())};
-        auto database = std::make_unique<ethdb::kv::RemoteDatabase>(*context.grpc_context(), channel);
+        kv::api::CoherentStateCache state_cache;
+        auto channel = ::grpc::CreateChannel(target, ::grpc::InsecureChannelCredentials());
+        auto backend = std::make_unique<rpc::ethbackend::RemoteBackEnd>(channel, grpc_context);
+        auto database = std::make_unique<db::kv::grpc::client::RemoteClient>(
+            create_channel, grpc_context, &state_cache, ethdb::kv::make_backend_providers(backend.get()));
 
         auto context_pool_thread = std::thread([&]() { context_pool.run(); });
 
-        const auto latest_block_number = get_latest_block(*io_context, *database);
-        if (latest_block_number) {
-            std::cout << "latest_block_number: " << latest_block_number.value() << "\n" << std::flush;
+        const auto latest_block_num = get_latest_block(*ioc, *database->service());
+        if (latest_block_num) {
+            std::cout << "latest_block_num: " << latest_block_num.value() << "\n";
         }
 
         if (context_pool_thread.joinable()) {
             context_pool_thread.join();
         }
     } catch (const std::exception& e) {
-        std::cerr << "Exception: " << e.what() << "\n" << std::flush;
+        std::cerr << "Exception: " << e.what() << "\n";
     } catch (...) {
-        std::cerr << "Unexpected exception\n" << std::flush;
+        std::cerr << "Unexpected exception\n";
     }
 
     return 0;

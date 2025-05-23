@@ -16,7 +16,7 @@
 
 #include "decode.hpp"
 
-#include <catch2/catch.hpp>
+#include <catch2/catch_test_macros.hpp>
 
 #include <silkworm/core/common/util.hpp>
 
@@ -28,7 +28,7 @@ template <class T>
 static T decode_success(std::string_view hex) {
     Bytes bytes{*from_hex(hex)};
     ByteView view{bytes};
-    T res;
+    T res{};
     REQUIRE(decode(view, res));
     return res;
 }

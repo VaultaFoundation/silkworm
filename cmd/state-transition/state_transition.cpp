@@ -16,6 +16,7 @@
 
 #include "state_transition.hpp"
 
+#include <bit>
 #include <fstream>
 #include <iostream>
 #include <memory>
@@ -23,39 +24,38 @@
 
 #include <nlohmann/json.hpp>
 
-#include "cmd/state-transition/expected_state.hpp"
-#include "silkworm/core/common/cast.hpp"
-#include "silkworm/core/execution/execution.hpp"
-#include "silkworm/core/protocol/param.hpp"
-#include "silkworm/core/protocol/rule_set.hpp"
-#include "silkworm/core/rlp/encode_vector.hpp"
-#include "silkworm/core/state/in_memory_state.hpp"
-#include "silkworm/sentry/common/ecc_key_pair.hpp"
-#include "third_party/ethash/include/ethash/keccak.hpp"
+#include <silkworm/core/chain/genesis.hpp>
+#include <silkworm/core/common/empty_hashes.hpp>
+#include <silkworm/core/common/util.hpp>
+#include <silkworm/core/execution/execution.hpp>
+#include <silkworm/core/protocol/param.hpp>
+#include <silkworm/core/protocol/rule_set.hpp>
+#include <silkworm/core/rlp/encode_vector.hpp>
+#include <silkworm/core/state/in_memory_state.hpp>
+#include <silkworm/core/types/address.hpp>
+#include <silkworm/core/types/evmc_bytes32.hpp>
+#include <silkworm/sentry/common/ecc_key_pair.hpp>
+
+#include "expected_state.hpp"
 
 namespace silkworm::cmd::state_transition {
 
 StateTransition::StateTransition(const std::string& file_path) noexcept {
     std::ifstream input_file(file_path);
-    nlohmann::json baseJson;
-    input_file >> baseJson;
-    auto testObject = baseJson.begin();
-    test_name_ = testObject.key();
-    test_data_ = testObject.value();
-
-    terminate_on_error_ = false;
-    show_diagnostics_ = false;
+    nlohmann::json base_json;
+    input_file >> base_json;
+    auto test_object = base_json.begin();
+    test_name_ = test_object.key();
+    test_data_ = test_object.value();
 }
 
-StateTransition::StateTransition(const nlohmann::json& json, const bool terminate_on_error, const bool show_diagnostics) noexcept {
-    auto testObject = json.begin();
-    test_name_ = testObject.key();
+StateTransition::StateTransition(const nlohmann::json& json, const bool terminate_on_error, const bool show_diagnostics) noexcept
+    : terminate_on_error_{terminate_on_error},
+      show_diagnostics_{show_diagnostics} {
+    auto test_object = json.begin();
+    test_name_ = test_object.key();
     std::cout << test_name_ << ":" << std::endl;
-
-    test_data_ = testObject.value();
-
-    terminate_on_error_ = terminate_on_error;
-    show_diagnostics_ = show_diagnostics;
+    test_data_ = test_object.value();
 }
 
 std::string StateTransition::name() {
@@ -71,22 +71,21 @@ bool StateTransition::contains_env(const std::string& key) {
 }
 
 std::vector<ExpectedState> StateTransition::get_expected_states() {
-    std::vector<ExpectedState> expectedStates;
+    std::vector<ExpectedState> expected_states;
 
-    for (const auto& postState : test_data_.at("post").items()) {
-        nlohmann::json data = postState.value();
-        const std::string& key = postState.key();
-        expectedStates.emplace_back(data, key);
+    for (const auto& post_state : test_data_.at("post").items()) {
+        nlohmann::json data = post_state.value();
+        const std::string& key = post_state.key();
+        expected_states.emplace_back(data, key);
     }
 
-    return expectedStates;
+    return expected_states;
 }
 
 evmc::address StateTransition::to_evmc_address(const std::string& address) {
     evmc::address out;
     if (!address.empty()) {
-        auto bytes = from_hex(address);
-        out = silkworm::to_evmc_address(bytes.value_or(Bytes{}));
+        out = hex_to_address(address);
     }
 
     return out;
@@ -109,9 +108,9 @@ Block StateTransition::get_block(InMemoryState& state, ChainConfig& chain_config
     const evmc_revision rev{chain_config.revision(block.header)};
 
     // set difficulty only for revisions before The Merge
-    // current block difficulty cannot fall below miniumum: https://eips.ethereum.org/EIPS/eip-2
+    // current block difficulty cannot fall below minimum: https://eips.ethereum.org/EIPS/eip-2
     static constexpr uint64_t kMinDifficulty{0x20000};
-    if (!chain_config.terminal_total_difficulty().has_value()) {
+    if (!chain_config._terminal_total_difficulty.has_value()) {
         block.header.difficulty = intx::from_string<intx::uint256>(get_env("currentDifficulty"));
         if (block.header.difficulty < kMinDifficulty && rev <= EVMC_LONDON) {
             block.header.difficulty = kMinDifficulty;
@@ -142,34 +141,6 @@ Block StateTransition::get_block(InMemoryState& state, ChainConfig& chain_config
     return block;
 }
 
-std::unique_ptr<InMemoryState> StateTransition::get_state() {
-    auto state = std::make_unique<InMemoryState>();
-
-    for (const auto& preState : test_data_["pre"].items()) {
-        const auto address = to_evmc_address(preState.key());
-        const nlohmann::json preStateValue = preState.value();
-
-        auto account = Account();
-        account.balance = intx::from_string<intx::uint256>(preStateValue.at("balance"));
-        account.nonce = std::stoull(std::string(preStateValue.at("nonce")), nullptr, 16);
-
-        const Bytes code{from_hex(std::string(preStateValue.at("code"))).value()};
-        account.code_hash = bit_cast<evmc_bytes32>(keccak256(code));
-        account.incarnation = kDefaultIncarnation;
-
-        state->update_account(address, /*initial=*/std::nullopt, account);
-        state->update_account_code(address, account.incarnation, account.code_hash, code);
-
-        for (const auto& storage : preStateValue.at("storage").items()) {
-            Bytes key{from_hex(storage.key()).value()};
-            Bytes value{from_hex(storage.value().get<std::string>()).value()};
-            state->update_storage(address, account.incarnation, to_bytes32(key), /*initial=*/{}, to_bytes32(value));
-        }
-    }
-
-    return state;
-}
-
 std::unique_ptr<evmc::address> StateTransition::private_key_to_address(const std::string& private_key) {
     /// Example
     // private key: 0x45a915e4d060149eb4365960e6a7a45f334393093061116b197e3240065ff2d8
@@ -178,13 +149,13 @@ std::unique_ptr<evmc::address> StateTransition::private_key_to_address(const std
 
     auto private_key_bytes = from_hex(private_key).value();
 
-    sentry::common::EccKeyPair pair = sentry::common::EccKeyPair(private_key_bytes);
+    auto pair = sentry::EccKeyPair(private_key_bytes);
 
     uint8_t out[kAddressLength];
     auto public_key_hash = keccak256(pair.public_key().serialized());
     std::memcpy(out, public_key_hash.bytes + 12, sizeof(out));
 
-    return std::make_unique<evmc::address>(silkworm::to_evmc_address(out));
+    return std::make_unique<evmc::address>(bytes_to_address(out));
 }
 
 Transaction StateTransition::get_transaction(const ExpectedSubState& expected_sub_state) {
@@ -192,7 +163,7 @@ Transaction StateTransition::get_transaction(const ExpectedSubState& expected_su
     auto j_transaction = test_data_["transaction"];
 
     txn.nonce = std::stoull(j_transaction.at("nonce").get<std::string>(), nullptr, 16);
-    txn.from = *private_key_to_address(j_transaction["secretKey"]);
+    txn.set_sender(*private_key_to_address(j_transaction["secretKey"]));
 
     const auto to_address = j_transaction.at("to").get<std::string>();
     if (!to_address.empty()) {
@@ -212,23 +183,20 @@ Transaction StateTransition::get_transaction(const ExpectedSubState& expected_su
 
     if (expected_sub_state.dataIndex >= j_transaction.at("data").size()) {
         throw std::runtime_error("data index out of range");
-    } else {
-        txn.data = from_hex(j_transaction.at("data").at(expected_sub_state.dataIndex).get<std::string>()).value();
     }
+    txn.data = from_hex(j_transaction.at("data").at(expected_sub_state.dataIndex).get<std::string>()).value();
 
     if (expected_sub_state.gasIndex >= j_transaction.at("gasLimit").size()) {
         throw std::runtime_error("gas limit index out of range");
-    } else {
-        txn.gas_limit = std::stoull(j_transaction.at("gasLimit").at(expected_sub_state.gasIndex).get<std::string>(), nullptr, 16);
     }
+    txn.gas_limit = std::stoull(j_transaction.at("gasLimit").at(expected_sub_state.gasIndex).get<std::string>(), nullptr, 16);
 
     if (expected_sub_state.valueIndex >= j_transaction.at("value").size()) {
         throw std::runtime_error("value index out of range");
-    } else {
-        auto value_str = j_transaction.at("value").at(expected_sub_state.valueIndex).get<std::string>();
-        // in case of bigint, set max value; compatible with all test cases so far
-        txn.value = (value_str.starts_with("0x:bigint ")) ? std::numeric_limits<intx::uint256>::max() : intx::from_string<intx::uint256>(value_str);
     }
+    auto value_str = j_transaction.at("value").at(expected_sub_state.valueIndex).get<std::string>();
+    // in case of bigint, set max value; compatible with all test cases so far
+    txn.value = (value_str.starts_with("0x:bigint ")) ? std::numeric_limits<intx::uint256>::max() : intx::from_string<intx::uint256>(value_str);
 
     if (j_transaction.contains("accessLists")) {
         auto j_access_list = j_transaction.at("accessLists").at(expected_sub_state.dataIndex);
@@ -265,13 +233,13 @@ void StateTransition::validate_transition(const Receipt& receipt, const Expected
 
     if (state.state_root_hash() != expected_sub_state.stateHash) {
         print_error_message(expected_state, expected_sub_state, "Failed: State root hash does not match");
-        failed_count_++;
+        ++failed_count_;
     } else {
         Bytes encoded;
         rlp::encode(encoded, receipt.logs);
-        if (bit_cast<evmc_bytes32>(keccak256(encoded)) != expected_sub_state.logsHash) {
+        if (std::bit_cast<evmc_bytes32>(keccak256(encoded)) != expected_sub_state.logsHash) {
             print_error_message(expected_state, expected_sub_state, "Failed: Logs hash does not match");
-            failed_count_++;
+            ++failed_count_;
         } else {
             print_diagnostic_message(expected_state, expected_sub_state, "OK");
         }
@@ -296,7 +264,7 @@ void StateTransition::print_message(const ExpectedState& expected_state, const E
 }
 
 /*
- * This function is used to cleanup the state after a failed block execution.
+ * This function is used to clean up the state after a failed block execution.
  * Certain post-processing would be a part of the execute_transaction() function,
  * but since the validation failed, we need to do it manually.
  */
@@ -305,12 +273,7 @@ void cleanup_error_block(Block& block, ExecutionProcessor& processor, const evmc
         processor.evm().state().access_account(block.header.beneficiary);
     }
     processor.evm().state().add_to_balance(block.header.beneficiary, 0);
-
-    processor.evm().state().destruct_suicides();
-    if (rev >= EVMC_SPURIOUS_DRAGON) {
-        processor.evm().state().destruct_touched_dead();
-    }
-
+    processor.evm().state().finalize_transaction(rev);
     processor.evm().state().write_to_db(block.header.number);
 }
 
@@ -318,23 +281,23 @@ void StateTransition::run() {
     failed_count_ = 0;
     total_count_ = 0;
 
-    for (auto& expectedState : get_expected_states()) {
-        for (const auto& expectedSubState : expectedState.get_sub_states()) {
+    for (auto& expected_state : get_expected_states()) {
+        for (const auto& expected_sub_state : expected_state.get_sub_states()) {
             ++total_count_;
-            auto config = expectedState.get_config();
-            auto ruleSet = protocol::rule_set_factory(config);
-            auto state = get_state();
-            auto block = get_block(*state, config);
-            auto txn = get_transaction(expectedSubState);
+            auto config = expected_state.get_config();
+            auto rule_set = protocol::rule_set_factory(config);
+            auto state = read_genesis_allocation(test_data_["pre"]);
+            auto block = get_block(state, config);
+            auto txn = get_transaction(expected_sub_state);
 
-            ExecutionProcessor processor{block, *ruleSet, *state, config, {}};
+            ExecutionProcessor processor{block, *rule_set, state, config, true, {}, {}};
             Receipt receipt;
 
             const evmc_revision rev{config.revision(block.header)};
 
-            auto pre_block_validation = ruleSet->pre_validate_block_body(block, *state);
-            auto block_validation = ruleSet->validate_block_header(block.header, *state, true);
-            auto pre_txn_validation = protocol::pre_validate_transaction(txn, rev, config.chain_id, block.header.base_fee_per_gas, block.header.data_gas_price(), 0, {});
+            auto pre_block_validation = rule_set->pre_validate_block_body(block, state);
+            auto block_validation = rule_set->validate_block_header(block.header, state, true);
+            auto pre_txn_validation = protocol::pre_validate_transaction(txn, rev, config.chain_id, block.header.base_fee_per_gas, block.header.blob_gas_price(), 0, {});
             auto txn_validation = protocol::validate_transaction(txn, processor.evm().state(), processor.available_gas());
 
             // std::cout << "pre: " << std::endl;
@@ -344,7 +307,7 @@ void StateTransition::run() {
                 block_validation == ValidationResult::kOk &&
                 pre_txn_validation == ValidationResult::kOk &&
                 txn_validation == ValidationResult::kOk) {
-                processor.execute_transaction(txn, receipt, {});
+                processor.execute_transaction(txn, receipt);
                 processor.evm().state().write_to_db(block.header.number);
             } else {
                 cleanup_error_block(block, processor, rev);
@@ -354,7 +317,7 @@ void StateTransition::run() {
             // std::cout << "post: " << std::endl;
             // state->print_state_root_hash();
 
-            validate_transition(receipt, expectedState, expectedSubState, *state);
+            validate_transition(receipt, expected_state, expected_sub_state, state);
         }
     }
 
@@ -364,4 +327,4 @@ void StateTransition::run() {
                   << std::endl;
     }
 }
-};  // namespace silkworm::cmd::state_transition
+}  // namespace silkworm::cmd::state_transition

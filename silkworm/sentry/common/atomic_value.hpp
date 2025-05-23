@@ -19,7 +19,7 @@
 #include <functional>
 #include <mutex>
 
-namespace silkworm::sentry::common {
+namespace silkworm::sentry {
 
 template <typename T>
 class AtomicValue {
@@ -31,12 +31,12 @@ class AtomicValue {
         value_ = value;
     }
 
-    [[nodiscard]] T get() {
+    T get() {
         std::scoped_lock lock(mutex_);
         return value_;
     }
 
-    [[nodiscard]] std::function<T()> getter() {
+    std::function<T()> getter() {
         return [this] { return this->get(); };
     }
 
@@ -45,4 +45,4 @@ class AtomicValue {
     std::mutex mutex_;
 };
 
-}  // namespace silkworm::sentry::common
+}  // namespace silkworm::sentry

@@ -19,22 +19,18 @@
 #include <exception>
 #include <stdexcept>
 
-#include <silkworm/infra/concurrency/coroutine.hpp>
+#include <silkworm/infra/concurrency/task.hpp>
 
-#include <boost/asio/awaitable.hpp>
-#include <boost/asio/co_spawn.hpp>
-#include <boost/asio/deadline_timer.hpp>
 #include <boost/asio/experimental/awaitable_operators.hpp>
-#include <boost/asio/io_context.hpp>
 #include <boost/asio/multiple_exceptions.hpp>
+#include <boost/asio/steady_timer.hpp>
 #include <boost/asio/this_coro.hpp>
-#include <boost/asio/use_future.hpp>
-#include <boost/date_time/posix_time/posix_time_duration.hpp>
 #include <boost/system/system_error.hpp>
-#include <catch2/catch.hpp>
+#include <catch2/catch_test_macros.hpp>
 
 #include <silkworm/infra/concurrency/awaitable_wait_for_all.hpp>
 #include <silkworm/infra/concurrency/awaitable_wait_for_one.hpp>
+#include <silkworm/infra/test_util/task_runner.hpp>
 
 namespace silkworm::concurrency {
 
@@ -47,32 +43,32 @@ class TestException : public std::runtime_error {
 };
 
 template <typename T>
-awaitable<T> async_value(T value) {
+Task<T> async_value(T value) {
     co_await this_coro::executor;
     co_return value;
 }
 
-awaitable<bool> async_ok() {
+Task<bool> async_ok() {
     return async_value(true);
 }
 
-awaitable<void> async_throw() {
+Task<void> async_throw() {
     co_await this_coro::executor;
     throw TestException();
 }
 
-awaitable<void> short_timeout() {
+Task<void> short_timeout() {
     co_await timeout(1ms);
 }
 
-awaitable<void> simple_timeout() {
+Task<void> simple_timeout() {
     co_await timeout(1h);
 }
 
-awaitable<void> wait_until_cancelled() {
+Task<void> wait_until_cancelled() {
     auto executor = co_await this_coro::executor;
-    deadline_timer timer(executor);
-    timer.expires_from_now(boost::posix_time::hours(1));
+    steady_timer timer(executor);
+    timer.expires_after(1h);
     co_await timer.async_wait(use_awaitable);
 }
 
@@ -81,30 +77,21 @@ class BadCancelException : public std::runtime_error {
     BadCancelException() : std::runtime_error("BadCancelException") {}
 };
 
-awaitable<void> wait_until_cancelled_bad() {
+Task<void> wait_until_cancelled_bad() {
     try {
         auto executor = co_await this_coro::executor;
-        deadline_timer timer(executor);
-        timer.expires_from_now(boost::posix_time::hours(1));
+        steady_timer timer(executor);
+        timer.expires_after(1h);
         co_await timer.async_wait(use_awaitable);
-    } catch (const boost::system::system_error& ex) {
+    } catch (const boost::system::system_error&) {
         throw BadCancelException();
     }
 }
 
 template <typename TResult>
-TResult run(awaitable<TResult> awaitable1) {
-    io_context context;
-    auto task = co_spawn(
-        context,
-        std::move(awaitable1),
-        boost::asio::use_future);
-
-    while (task.wait_for(0s) != std::future_status::ready) {
-        context.poll_one();
-    }
-
-    return task.get();
+TResult run(Task<TResult> task) {
+    test_util::TaskRunner runner;
+    return runner.run(std::move(task));
 }
 
 TEST_CASE("Timeout.value") {

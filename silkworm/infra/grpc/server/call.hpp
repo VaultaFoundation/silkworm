@@ -23,9 +23,6 @@
 #include <utility>
 
 #include <agrpc/repeatedly_request.hpp>
-#include <boost/asio/deadline_timer.hpp>
-#include <boost/asio/io_context.hpp>
-#include <boost/date_time/posix_time/posix_time_io.hpp>
 #include <grpcpp/grpcpp.h>
 #include <grpcpp/impl/codegen/async_stream.h>
 #include <grpcpp/impl/codegen/async_unary_call.h>
@@ -37,7 +34,7 @@ namespace silkworm::rpc {
 //! Register a server-side RPC repeatedly: whenever a client request is accepted, another waiting RPC is started
 template <class RPC, class AsyncService, class RequestHandler>
 void request_repeatedly(agrpc::GrpcContext& grpc_context, const AsyncService& service, RPC rpc, RequestHandler&& handler) {
-    agrpc::repeatedly_request(rpc, *service, boost::asio::bind_executor(grpc_context, handler));
+    agrpc::repeatedly_request(rpc, *service, boost::asio::bind_executor(grpc_context, std::forward<decltype(handler)>(handler)));
 }
 
 namespace server {
@@ -66,7 +63,7 @@ namespace server {
         }
 
         //! Returns a unique identifier of the RPC client for this call.
-        [[nodiscard]] std::string peer() const { return server_context_.peer(); }
+        std::string peer() const { return server_context_.peer(); }
 
       protected:
         //! Used to access the options and current status of the RPC.
@@ -74,10 +71,10 @@ namespace server {
 
       private:
         //! Keep track of the total outstanding RPC calls (intentionally signed to spot underflow).
-        inline static std::atomic_int64_t instance_count_ = 0;
+        static inline std::atomic_int64_t instance_count_{0};
 
         //! Keep track of the total RPC calls.
-        inline static std::atomic_uint64_t total_count_ = 0;
+        static inline std::atomic_uint64_t total_count_{0};
     };
 
     //! This represents any unary RPC (i.e. one-client-request, one-server-response).
@@ -125,7 +122,7 @@ namespace server {
             : Call(server_context), responder_(responder), grpc_context_(grpc_context) {}
 
       protected:
-        inline static std::chrono::milliseconds max_idle_duration_{kDefaultMaxIdleDuration};
+        static inline std::chrono::milliseconds max_idle_duration_{kDefaultMaxIdleDuration};
 
         Responder& responder_;
         agrpc::GrpcContext& grpc_context_;
@@ -133,10 +130,10 @@ namespace server {
 
     class CallException : public std::runtime_error {
       public:
-        explicit CallException(grpc::Status&& status)
+        explicit CallException(grpc::Status status)
             : std::runtime_error(status.error_message()), status_(std::move(status)) {}
 
-        [[nodiscard]] grpc::Status status() const { return status_; }
+        grpc::Status status() const { return status_; }
 
       private:
         grpc::Status status_;

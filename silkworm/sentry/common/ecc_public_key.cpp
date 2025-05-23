@@ -21,15 +21,15 @@
 #include <silkworm/core/common/util.hpp>
 #include <silkworm/infra/common/secp256k1_context.hpp>
 
-namespace silkworm::sentry::common {
+namespace silkworm::sentry {
 
-Bytes EccPublicKey::serialized_std() const {
+Bytes EccPublicKey::serialized_std(bool is_compressed) const {
     auto& data = data_;
     secp256k1_pubkey public_key;
     memcpy(public_key.data, data.data(), sizeof(public_key.data));
 
     SecP256K1Context ctx;
-    return ctx.serialize_public_key(&public_key, /* is_compressed = */ false);
+    return ctx.serialize_public_key(&public_key, is_compressed);
 }
 
 Bytes EccPublicKey::serialized() const {
@@ -72,4 +72,4 @@ bool operator<(const EccPublicKey& lhs, const EccPublicKey& rhs) {
     return lhs.data() < rhs.data();
 }
 
-}  // namespace silkworm::sentry::common
+}  // namespace silkworm::sentry

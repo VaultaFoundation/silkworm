@@ -19,20 +19,21 @@
 #include <regex>
 #include <sstream>
 #include <stdexcept>
+#include <string>
 
-#include <boost/lexical_cast.hpp>
+#include <gsl/narrow>
 
-namespace silkworm::sentry::common {
+namespace silkworm::sentry {
 
 using namespace std;
 
-EnodeUrl::EnodeUrl(const string& url_str)
+EnodeUrl::EnodeUrl(string_view url_str)
     : public_key_(Bytes{}) {
     regex url_regex(
         R"(enode://([0-9a-f]+)@((?:\d+\.){3}\d+)\:(\d+))",
         regex::icase);
-    smatch match;
-    if (!regex_match(url_str, match, url_regex)) {
+    match_results<std::string_view::const_iterator> match;
+    if (!regex_match(url_str.cbegin(), url_str.cend(), match, url_regex)) {
         throw invalid_argument("Invalid enode URL format");
     }
 
@@ -42,11 +43,12 @@ EnodeUrl::EnodeUrl(const string& url_str)
 
     auto ip = boost::asio::ip::make_address(ip_str);
 
-    auto port = boost::lexical_cast<uint16_t>(port_str);
+    auto port = gsl::narrow<uint16_t>(std::stoul(port_str));
 
-    public_key_ = common::EccPublicKey::deserialize_hex(pub_key_hex);
+    public_key_ = EccPublicKey::deserialize_hex(pub_key_hex);
     ip_ = ip;
-    port_ = port;
+    port_disc_ = port;
+    port_rlpx_ = port;
 }
 
 string EnodeUrl::to_string() const {
@@ -54,7 +56,12 @@ string EnodeUrl::to_string() const {
     out << "enode://";
     out << public_key_.hex() << "@";
     out << ip_.to_string();
-    out << ":" << port_;
+    out << ":" << port_rlpx_;
+
+    if (port_disc_ != port_rlpx_) {
+        out << "?discport=" << port_disc_;
+    }
+
     return out.str();
 }
 
@@ -62,4 +69,4 @@ bool EnodeUrl::operator<(const EnodeUrl& other) const {
     return to_string() < other.to_string();
 }
 
-}  // namespace silkworm::sentry::common
+}  // namespace silkworm::sentry

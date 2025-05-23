@@ -16,7 +16,9 @@
 
 #pragma once
 
-#include <silkworm/node/stagedsync/client.hpp>
+#include <memory>
+
+#include <silkworm/execution/api/client.hpp>
 #include <silkworm/sync/block_exchange.hpp>
 #include <silkworm/sync/internals/chain_fork_view.hpp>
 
@@ -24,17 +26,17 @@ namespace silkworm::chainsync {
 
 class ChainSync {
   public:
-    ChainSync(BlockExchange&, execution::Client&);
+    ChainSync(IBlockExchange&, execution::api::Client&);
     virtual ~ChainSync() = default;
 
     ChainSync(const ChainSync&) = delete;
     ChainSync& operator=(const ChainSync&) = delete;
 
-    virtual boost::asio::awaitable<void> async_run() = 0;
+    virtual Task<void> async_run() = 0;
 
   protected:
-    BlockExchange& block_exchange_;
-    execution::Client& exec_engine_;
+    IBlockExchange& block_exchange_;
+    std::shared_ptr<execution::api::Service> exec_engine_;
     ChainForkView chain_fork_view_;
 };
 

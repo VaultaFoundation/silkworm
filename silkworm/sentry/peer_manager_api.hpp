@@ -22,20 +22,21 @@
 
 #include <silkworm/infra/concurrency/task.hpp>
 
-#include <boost/asio/io_context.hpp>
+#include <boost/asio/any_io_executor.hpp>
 #include <boost/asio/strand.hpp>
 
 #include <silkworm/infra/concurrency/awaitable_future.hpp>
 #include <silkworm/infra/concurrency/channel.hpp>
 #include <silkworm/infra/concurrency/event_notifier.hpp>
 #include <silkworm/infra/concurrency/task_group.hpp>
-#include <silkworm/sentry/api/api_common/peer_event.hpp>
-#include <silkworm/sentry/api/api_common/peer_info.hpp>
+#include <silkworm/sentry/api/common/peer_event.hpp>
+#include <silkworm/sentry/api/common/peer_info.hpp>
 #include <silkworm/sentry/api/router/peer_call.hpp>
 #include <silkworm/sentry/api/router/peer_events_call.hpp>
 #include <silkworm/sentry/common/ecc_public_key.hpp>
 
 #include "peer_manager.hpp"
+#include "peer_manager_observer.hpp"
 #include "rlpx/peer.hpp"
 
 namespace silkworm::sentry {
@@ -43,19 +44,19 @@ namespace silkworm::sentry {
 class PeerManagerApi : public PeerManagerObserver {
   public:
     explicit PeerManagerApi(
-        boost::asio::io_context& io_context,
+        const boost::asio::any_io_executor& executor,
         PeerManager& peer_manager)
         : peer_manager_(peer_manager),
-          peer_count_calls_channel_(io_context),
-          peers_calls_channel_(io_context),
-          peer_calls_channel_(io_context),
-          peer_penalize_calls_channel_(io_context),
-          peer_events_calls_channel_(io_context),
-          strand_(boost::asio::make_strand(io_context)),
+          peer_count_calls_channel_(executor),
+          peers_calls_channel_(executor),
+          peer_calls_channel_(executor),
+          peer_penalize_calls_channel_(executor),
+          peer_events_calls_channel_(executor),
+          strand_(boost::asio::make_strand(executor)),
           events_unsubscription_tasks_(strand_, 1000),
-          peer_events_channel_(io_context, 1000) {}
+          peer_events_channel_(executor, 1000) {}
 
-    static Task<void> start(std::shared_ptr<PeerManagerApi> self);
+    static Task<void> run(std::shared_ptr<PeerManagerApi> self);
 
     template <typename T>
     using Channel = concurrency::Channel<T>;
@@ -64,7 +65,7 @@ class PeerManagerApi : public PeerManagerObserver {
         return peer_count_calls_channel_;
     }
 
-    Channel<std::shared_ptr<concurrency::AwaitablePromise<api::api_common::PeerInfos>>>& peers_calls_channel() {
+    Channel<std::shared_ptr<concurrency::AwaitablePromise<api::PeerInfos>>>& peers_calls_channel() {
         return peers_calls_channel_;
     }
 
@@ -72,7 +73,7 @@ class PeerManagerApi : public PeerManagerObserver {
         return peer_calls_channel_;
     }
 
-    Channel<std::optional<common::EccPublicKey>>& peer_penalize_calls_channel() {
+    Channel<std::optional<EccPublicKey>>& peer_penalize_calls_channel() {
         return peer_penalize_calls_channel_;
     }
 
@@ -92,24 +93,25 @@ class PeerManagerApi : public PeerManagerObserver {
     // PeerManagerObserver
     void on_peer_added(std::shared_ptr<rlpx::Peer> peer) override;
     void on_peer_removed(std::shared_ptr<rlpx::Peer> peer) override;
+    void on_peer_connect_error(const EnodeUrl& peer_url) override;
 
     PeerManager& peer_manager_;
 
     Channel<std::shared_ptr<concurrency::AwaitablePromise<size_t>>> peer_count_calls_channel_;
-    Channel<std::shared_ptr<concurrency::AwaitablePromise<api::api_common::PeerInfos>>> peers_calls_channel_;
+    Channel<std::shared_ptr<concurrency::AwaitablePromise<api::PeerInfos>>> peers_calls_channel_;
     Channel<api::router::PeerCall> peer_calls_channel_;
-    Channel<std::optional<common::EccPublicKey>> peer_penalize_calls_channel_;
+    Channel<std::optional<EccPublicKey>> peer_penalize_calls_channel_;
     Channel<api::router::PeerEventsCall> peer_events_calls_channel_;
 
     struct Subscription {
-        std::shared_ptr<Channel<api::api_common::PeerEvent>> events_channel;
+        std::shared_ptr<Channel<api::PeerEvent>> events_channel;
         std::shared_ptr<concurrency::EventNotifier> unsubscribe_signal;
     };
 
     std::list<Subscription> events_subscriptions_;
-    boost::asio::strand<boost::asio::io_context::executor_type> strand_;
+    boost::asio::strand<boost::asio::any_io_executor> strand_;
     concurrency::TaskGroup events_unsubscription_tasks_;
-    Channel<api::api_common::PeerEvent> peer_events_channel_;
+    Channel<api::PeerEvent> peer_events_channel_;
 };
 
 }  // namespace silkworm::sentry

@@ -18,15 +18,15 @@
 
 // The most common and basic macros, concepts, types, and constants.
 
+#include <concepts>
 #include <cstddef>
 #include <cstdint>
-#include <span>
-#include <string>
-#include <string_view>
+#include <limits>
 #include <tuple>
 
-#include <evmc/evmc.hpp>
 #include <intx/intx.hpp>
+
+#include <silkworm/core/common/assert.hpp>
 
 #if defined(__wasm__)
 #define SILKWORM_THREAD_LOCAL static
@@ -36,72 +36,45 @@
 
 namespace silkworm {
 
-using namespace evmc::literals;
+using namespace std::string_view_literals;
 
-template <typename T>
-struct is_vector : std::false_type {};
+template <class T>
+concept UnsignedIntegral = std::unsigned_integral<T> || std::same_as<T, intx::uint128> ||
+                           std::same_as<T, intx::uint256> || std::same_as<T, intx::uint512>;
 
-template <typename U>
-struct is_vector<std::vector<U>> : std::true_type {};
+using TxnId = uint64_t;
 
-template <typename T>
-constexpr bool is_vector_v = is_vector<T>::value;
-
-template <typename T>
-constexpr bool UnsignedIntegral = (std::is_integral_v<T> && !std::is_signed_v<T> ) || std::is_same_v<T, intx::uint128>
-          || std::is_same_v<T, intx::uint256> || std::is_same_v<T, intx::uint512>;
-
-using Bytes = std::basic_string<uint8_t>;
-
-class ByteView : public std::basic_string_view<uint8_t> {
-  public:
-    constexpr ByteView() noexcept = default;
-
-    constexpr ByteView(const std::basic_string_view<uint8_t>& other) noexcept
-        : std::basic_string_view<uint8_t>{other.data(), other.length()} {}
-
-    ByteView(const Bytes& str) noexcept : std::basic_string_view<uint8_t>{str.data(), str.length()} {}
-
-    constexpr ByteView(const uint8_t* data, size_type length) noexcept
-        : std::basic_string_view<uint8_t>{data, length} {}
-
-    template <std::size_t N>
-    constexpr ByteView(const uint8_t (&array)[N]) noexcept : std::basic_string_view<uint8_t>{array, N} {}
-
-    template <std::size_t N>
-    constexpr ByteView(const std::array<uint8_t, N>& array) noexcept
-        : std::basic_string_view<uint8_t>{array.data(), N} {}
-
-    constexpr ByteView(const evmc::address& address) noexcept : ByteView{address.bytes} {}
-
-    constexpr ByteView(const evmc::bytes32& hash) noexcept : ByteView{hash.bytes} {}
-
-    template <std::size_t Extent>
-    constexpr ByteView(std::span<const uint8_t, Extent> span) noexcept
-        : std::basic_string_view<uint8_t>{span.data(), span.size()} {}
-
-    [[nodiscard]] bool is_null() const noexcept { return data() == nullptr; }
+struct TxnIdRange {
+    TxnId start;
+    TxnId end;
+    TxnIdRange(TxnId start1, TxnId end1) : start(start1), end(end1) {}
+    friend bool operator==(const TxnIdRange&, const TxnIdRange&) = default;
+    bool contains(TxnId num) const { return (start <= num) && (num < end); }
+    bool contains_range(TxnIdRange range) const { return (start <= range.start) && (range.end <= end); }
+    TxnId size() const { return end - start; }
+    std::string to_string() const { return std::string("[") + std::to_string(start) + ", " + std::to_string(end) + ")"; }
 };
 
 using BlockNum = uint64_t;
-using BlockNumRange = std::pair<BlockNum, BlockNum>;
+
+struct BlockNumRange {
+    BlockNum start;
+    BlockNum end;
+    BlockNumRange(BlockNum start1, BlockNum end1) : start(start1), end(end1) {}
+    friend bool operator==(const BlockNumRange&, const BlockNumRange&) = default;
+    bool contains(BlockNum block_num) const { return (start <= block_num) && (block_num < end); }
+    bool contains_range(BlockNumRange range) const { return (start <= range.start) && (range.end <= end); }
+    BlockNum size() const { return end - start; }
+    std::string to_string() const { return std::string("[") + std::to_string(start) + ", " + std::to_string(end) + ")"; }
+};
+
 using BlockTime = uint64_t;
+
+inline constexpr BlockNum kEarliestBlockNum{0ul};
 
 inline constexpr size_t kAddressLength{20};
 
 inline constexpr size_t kHashLength{32};
-
-inline constexpr size_t kExtraSealSize{65};
-
-// Keccak-256 hash of an empty string, KEC("").
-inline constexpr evmc::bytes32 kEmptyHash{0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470_bytes32};
-
-// Keccak-256 hash of the RLP of an empty list, KEC("\xc0").
-inline constexpr evmc::bytes32 kEmptyListHash{
-    0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347_bytes32};
-
-// Root hash of an empty trie.
-inline constexpr evmc::bytes32 kEmptyRoot{0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421_bytes32};
 
 // https://en.wikipedia.org/wiki/Binary_prefix
 inline constexpr uint64_t kKibi{1024};
@@ -112,9 +85,21 @@ inline constexpr uint64_t kTebi{1024 * kGibi};
 inline constexpr uint64_t kGiga{1'000'000'000};   // = 10^9
 inline constexpr uint64_t kEther{kGiga * kGiga};  // = 10^18
 
-constexpr uint64_t operator"" _Kibi(unsigned long long x) { return x * kKibi; }
-constexpr uint64_t operator"" _Mebi(unsigned long long x) { return x * kMebi; }
-constexpr uint64_t operator"" _Gibi(unsigned long long x) { return x * kGibi; }
-constexpr uint64_t operator"" _Tebi(unsigned long long x) { return x * kTebi; }
+consteval uint64_t operator"" _Kibi(unsigned long long x) {
+    SILKWORM_ASSERT(x <= std::numeric_limits<uint64_t>::max() / kKibi);
+    return x * kKibi;
+}
+consteval uint64_t operator"" _Mebi(unsigned long long x) {
+    SILKWORM_ASSERT(x <= std::numeric_limits<uint64_t>::max() / kMebi);
+    return x * kMebi;
+}
+consteval uint64_t operator"" _Gibi(unsigned long long x) {
+    SILKWORM_ASSERT(x <= std::numeric_limits<uint64_t>::max() / kGibi);
+    return x * kGibi;
+}
+consteval uint64_t operator"" _Tebi(unsigned long long x) {
+    SILKWORM_ASSERT(x <= std::numeric_limits<uint64_t>::max() / kTebi);
+    return x * kTebi;
+}
 
 }  // namespace silkworm

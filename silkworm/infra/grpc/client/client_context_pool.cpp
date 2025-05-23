@@ -16,86 +16,60 @@
 
 #include "client_context_pool.hpp"
 
+#include <exception>
 #include <thread>
 
-#include <magic_enum.hpp>
-
-#include <silkworm/infra/concurrency/idle_strategy.hpp>
+#include <silkworm/infra/common/log.hpp>
 
 namespace silkworm::rpc {
 
 using namespace concurrency;
 
-std::ostream& operator<<(std::ostream& out, const ClientContext& c) {
-    out << "io_context: " << c.io_context() << " wait_mode: " << magic_enum::enum_name(c.wait_mode());
-    return out;
-}
-
-ClientContext::ClientContext(std::size_t context_id, WaitMode wait_mode)
-    : Context(context_id, wait_mode),
+ClientContext::ClientContext(size_t context_id)
+    : Context{context_id},
       grpc_context_{std::make_unique<agrpc::GrpcContext>()},
       grpc_context_work_{boost::asio::make_work_guard(grpc_context_->get_executor())} {}
 
+void ClientContext::destroy_grpc_context() {
+    grpc_context_work_.reset();
+    grpc_context_.reset();
+}
+
 void ClientContext::execute_loop() {
-    switch (wait_mode_) {
-        case WaitMode::backoff:
-            execute_loop_backoff();
-            break;
-        case WaitMode::blocking:
-            execute_loop_multi_threaded();
-            break;
-        case WaitMode::yielding:
-            execute_loop_single_threaded(YieldingIdleStrategy{});
-            break;
-        case WaitMode::sleeping:
-            execute_loop_single_threaded(SleepingIdleStrategy{});
-            break;
-        case WaitMode::busy_spin:
-            execute_loop_single_threaded(BusySpinIdleStrategy{});
-            break;
-    }
-}
+    SILK_DEBUG << "ClientContext execution loop start [" << std::this_thread::get_id() << "]";
 
-void ClientContext::execute_loop_backoff() {
-    SILK_DEBUG << "Back-off execution loop start [" << std::this_thread::get_id() << "]";
-    agrpc::run(*grpc_context_, *io_context_, [&] { return io_context_->stopped(); });
-    SILK_DEBUG << "Back-off execution loop end [" << std::this_thread::get_id() << "]";
-}
-
-template <typename IdleStrategy>
-void ClientContext::execute_loop_single_threaded(IdleStrategy&& idle_strategy) {
-    SILK_DEBUG << "Single-thread execution loop start [" << std::this_thread::get_id() << "]";
-    while (!io_context_->stopped()) {
-        std::size_t work_count = grpc_context_->poll_completion_queue();
-        work_count += io_context_->poll();
-        idle_strategy.idle(work_count);
-    }
-    SILK_DEBUG << "Single-thread execution loop end [" << std::this_thread::get_id() << "]";
-}
-
-void ClientContext::execute_loop_multi_threaded() {
-    SILK_DEBUG << "Multi-thread execution loop start [" << std::this_thread::get_id() << "]";
-    std::thread grpc_context_thread{[grpc_context = grpc_context_]() {
+    std::thread grpc_context_thread{[context_id = context_id_, grpc_context = grpc_context_]() {
+        log::set_thread_name(("grpc_ctx_s" + std::to_string(context_id)).c_str());
         grpc_context->run_completion_queue();
     }};
-    io_context_->run();
+
+    std::exception_ptr run_exception;
+    try {
+        ioc_->run();
+    } catch (...) {
+        run_exception = std::current_exception();
+    }
 
     grpc_context_work_.reset();
     grpc_context_->stop();
     grpc_context_thread.join();
-    SILK_DEBUG << "Multi-thread execution loop end [" << std::this_thread::get_id() << "]";
+
+    if (run_exception) {
+        std::rethrow_exception(run_exception);
+    }
+    SILK_DEBUG << "ClientContext execution loop end [" << std::this_thread::get_id() << "]";
 }
 
-ClientContextPool::ClientContextPool(std::size_t pool_size, concurrency::WaitMode wait_mode)
-    : ContextPool(pool_size) {
-    // Create as many execution contexts as required by the pool size
-    for (std::size_t i{0}; i < pool_size; ++i) {
-        add_context(wait_mode);
+ClientContextPool::~ClientContextPool() {
+    stop();  // must be called to simplify exposed API, no problem because idempotent
+    join();  // must be called to simplify exposed API, no problem because idempotent
+
+    // Ensure *all* agrpc::GrpcContext get destroyed BEFORE any boost::asio::io_context is destroyed to avoid triggering
+    // undefined behavior when dispatching calls from i-th agrpc::GrpcContext to j-th boost::asio::io_context w/ i != j
+    for (auto& context : contexts_) {
+        context.destroy_grpc_context();
     }
 }
-
-ClientContextPool::ClientContextPool(concurrency::ContextPoolSettings settings)
-    : ClientContextPool(settings.num_contexts, settings.wait_mode) {}
 
 void ClientContextPool::start() {
     // Cannot restart because ::grpc::CompletionQueue inside agrpc::GrpcContext cannot be reused
@@ -106,10 +80,8 @@ void ClientContextPool::start() {
     ContextPool<ClientContext>::start();
 }
 
-void ClientContextPool::add_context(concurrency::WaitMode wait_mode) {
-    const auto context_count = num_contexts();
-    const auto& client_context = ContextPool::add_context(ClientContext{context_count, wait_mode});
-    SILK_DEBUG << "ClientContextPool::add_context context[" << context_count << "] " << client_context;
+agrpc::GrpcContext& ClientContextPool::any_grpc_context() {
+    return *next_context().grpc_context();
 }
 
 }  // namespace silkworm::rpc

@@ -21,9 +21,9 @@
 
 #include <silkworm/core/execution/execution.hpp>
 #include <silkworm/core/protocol/rule_set.hpp>
+#include <silkworm/db/access_layer.hpp>
+#include <silkworm/db/buffer.hpp>
 #include <silkworm/infra/common/directories.hpp>
-#include <silkworm/node/db/access_layer.hpp>
-#include <silkworm/node/db/buffer.hpp>
 
 int main(int argc, char* argv[]) {
     CLI::App app{"Executes Ethereum blocks and scans txs for errored txs"};
@@ -40,31 +40,30 @@ int main(int argc, char* argv[]) {
     uint64_t to{UINT64_MAX};
     app.add_option("--to", to, "check up to block number (exclusive)");
 
-    CLI11_PARSE(app, argc, argv);
+    CLI11_PARSE(app, argc, argv)
 
     if (from > to) {
         std::cerr << "--from (" << from << ") must be less than or equal to --to (" << to << ").\n";
         return -1;
     }
 
-    int retvar{0};
+    int rv{0};
 
     // Note: If Erigon is actively syncing its database (syncing), it is important not to create
-    // long-running datbase reads transactions even though that may make your processing faster.
+    // long-running database reads transactions even though that may make your processing faster.
     // Uncomment the following line (and comment the line below) only if you're certain Erigon is not
     // running on the same machine.
     // std::unique_ptr<lmdb::Transaction> txn{env->begin_ro_transaction()};
 
     AnalysisCache analysis_cache{/*max_size=*/5'000};
-    ObjectPool<evmone::ExecutionState> state_pool;
     std::vector<Receipt> receipts;
 
     try {
         auto data_dir{DataDirectory::from_chaindata(chaindata)};
         data_dir.deploy();
-        db::EnvConfig db_config{data_dir.chaindata().path().string()};
-        auto env{db::open_env(db_config)};
-        db::RWTxn txn{env};
+        datastore::kvdb::EnvConfig db_config{data_dir.chaindata().path().string()};
+        auto env{datastore::kvdb::open_env(db_config)};
+        datastore::kvdb::RWTxnManaged txn{env};
         auto chain_config{db::read_chain_config(txn)};
         if (!chain_config) {
             throw std::runtime_error("Unable to retrieve chain config");
@@ -75,7 +74,7 @@ int main(int argc, char* argv[]) {
         }
 
         // counters
-        uint64_t nTxs{0}, nErrors{0};
+        uint64_t n_txs{0}, n_errors{0};
 
         Block block;
         for (uint64_t block_num{from}; block_num < to; ++block_num) {
@@ -89,30 +88,32 @@ int main(int argc, char* argv[]) {
                 break;
             }
 
-            db::Buffer buffer{txn, /*prune_history_threshold=*/0, /*historical_block=*/block_num};
+            db::Buffer buffer{txn, std::make_unique<db::BufferROTxDataModel>(txn)};
+            buffer.set_historical_block(block_num);
 
-            ExecutionProcessor processor{block, *rule_set, buffer, *chain_config, {}};
+            ExecutionProcessor processor{block, *rule_set, buffer, *chain_config, true, {}, {}};
             processor.evm().analysis_cache = &analysis_cache;
-            processor.evm().state_pool = &state_pool;
 
             // Execute the block and retrieve the receipts
-            if (const auto res{processor.execute_and_write_block(receipts, {})}; res != ValidationResult::kOk) {
+            if (const ValidationResult res = processor.execute_block(receipts); res != ValidationResult::kOk) {
                 std::cerr << "Validation error " << static_cast<int>(res) << " at block " << block_num << "\n";
             }
 
+            processor.flush_state();
+
             // There is one receipt per transaction
-            assert(block.transactions.size() == receipts.size());
+            SILKWORM_ASSERT(block.transactions.size() == receipts.size());
 
             // Erigon returns success in the receipt even for pre-Byzantium txs.
             for (const auto& receipt : receipts) {
-                ++nTxs;
-                nErrors += (!receipt.success);
+                ++n_txs;
+                n_errors += (!receipt.success);
             }
 
             // Report and reset counters
             if ((block_num % 50000) == 0) {
-                std::cout << block_num << "," << nTxs << "," << nErrors << std::endl;
-                nTxs = nErrors = 0;
+                std::cout << block_num << "," << n_txs << "," << n_errors << "\n";
+                n_txs = n_errors = 0;
 
             } else if ((block_num % 100) == 0) {
                 // report progress
@@ -125,9 +126,9 @@ int main(int argc, char* argv[]) {
         }
 
     } catch (std::exception& ex) {
-        std::cout << ex.what() << std::endl;
-        retvar = -1;
+        std::cout << ex.what() << "\n";
+        rv = -1;
     }
 
-    return retvar;
+    return rv;
 }

@@ -16,13 +16,15 @@
 
 #pragma once
 
-#include <silkworm/core/common/base.hpp>
+#include <cstdint>
 
-namespace silkworm::sentry::common {
+#include <silkworm/core/common/bytes.hpp>
+
+namespace silkworm::sentry {
 
 struct Message {
     uint8_t id{0};
     Bytes data;
 };
 
-}  // namespace silkworm::sentry::common
+}  // namespace silkworm::sentry

@@ -16,16 +16,20 @@
 
 #include "validation.hpp"
 
-#include <silkworm/core/common/cast.hpp>
+#include <bit>
+
+#include <silkworm/core/common/empty_hashes.hpp>
 #include <silkworm/core/crypto/secp256k1n.hpp>
+#include <silkworm/core/execution/evm.hpp>
 #include <silkworm/core/rlp/encode_vector.hpp>
 #include <silkworm/core/trie/vector_root.hpp>
 #include <eosevm/version.hpp>
 
 #include "intrinsic_gas.hpp"
 #include "param.hpp"
-
+#include "silkworm/core/types/eip_7685_requests.hpp"
 using namespace eosevm;
+
 namespace silkworm::protocol {
 
 bool transaction_type_is_supported(TransactionType type, evmc_revision rev) {
@@ -34,86 +38,41 @@ bool transaction_type_is_supported(TransactionType type, evmc_revision rev) {
         EVMC_BERLIN,    // kAccessList
         EVMC_LONDON,    // kDynamicFee
         EVMC_CANCUN,    // kBlob
+        EVMC_PRAGUE,    // kSetCode
     };
-    const auto i{static_cast<std::size_t>(type)};
+    const auto i{static_cast<size_t>(type)};
     return i < std::size(kMinRevisionByType) && rev >= kMinRevisionByType[i];
 }
 
 ValidationResult pre_validate_transaction(const Transaction& txn, const evmc_revision rev, const uint64_t chain_id,
                                           const std::optional<intx::uint256>& base_fee_per_gas,
-                                          const std::optional<intx::uint256>& data_gas_price,
+                                          const std::optional<intx::uint256>& blob_gas_price,
                                           uint64_t evm_version, const evmone::gas_parameters& gas_params) {
-    if (txn.chain_id.has_value()) {
-        if (rev < EVMC_SPURIOUS_DRAGON) {
-            // EIP-155 transaction before EIP-155 was activated
-            return ValidationResult::kUnsupportedTransactionType;
+    if (const auto common_check = pre_validate_common_base(txn, rev, chain_id, evm_version, gas_params); common_check != ValidationResult::kOk) {
+        return common_check;
+    }
+
+    bool enforce_eip2 = evm_version >= EVM_VERSION_3;
+    #ifdef WITH_SOFT_FORKS
+    enforce_eip2 = true;
+    #endif
+    if (!is_special_signature(txn.r, txn.s) && !is_valid_signature(txn.r, txn.s, enforce_eip2)) {
+        return ValidationResult::kInvalidSignature;
+    }
+
+    if (rev >= EVMC_LONDON) {
+        if (base_fee_per_gas.has_value() && txn.max_fee_per_gas < base_fee_per_gas.value()) {
+            return ValidationResult::kMaxFeeLessThanBase;
         }
-        if (txn.chain_id.value() != chain_id) {
-            return ValidationResult::kWrongChainId;
-        }
-    }
 
-    if (!transaction_type_is_supported(txn.type, rev)) {
-        return ValidationResult::kUnsupportedTransactionType;
-    }
-
-    if (base_fee_per_gas.has_value() && txn.max_fee_per_gas < base_fee_per_gas.value()) {
-        return ValidationResult::kMaxFeeLessThanBase;
-    }
-
-    // https://github.com/ethereum/EIPs/pull/3594
-    if (txn.max_priority_fee_per_gas > txn.max_fee_per_gas) {
-        return ValidationResult::kMaxPriorityFeeGreaterThanMax;
-    }
-
-    /* Should the sender already be present it means the validation of signature already occurred */
-    if (!txn.from.has_value()) {
-        bool enforce_eip2 = evm_version >= EVM_VERSION_3;
-        #ifdef WITH_SOFT_FORKS
-        enforce_eip2 = true;
-        #endif
-        if (!is_special_signature(txn.r, txn.s) && !is_valid_signature(txn.r, txn.s, enforce_eip2)) {
-            return ValidationResult::kInvalidSignature;
+        // https://github.com/ethereum/EIPs/pull/3594
+        if (txn.max_priority_fee_per_gas > txn.max_fee_per_gas) {
+            return ValidationResult::kMaxPriorityFeeGreaterThanMax;
         }
     }
 
-    const intx::uint128 g0{intrinsic_gas(txn, rev, evm_version, gas_params)};
-    if (txn.gas_limit < g0) {
-        return ValidationResult::kIntrinsicGas;
-    }
-
-    if (intx::count_significant_bytes(txn.maximum_gas_cost()) > 32) {
-        return ValidationResult::kInsufficientFunds;
-    }
-
-    // EIP-2681: Limit account nonce to 2^64-1
-    if (txn.nonce >= UINT64_MAX) {
-        return ValidationResult::kNonceTooHigh;
-    }
-
-    // EIP-3860: Limit and meter initcode
-    const bool contract_creation{!txn.to};
-    if (rev >= EVMC_SHANGHAI && contract_creation && txn.data.size() > kMaxInitCodeSize) {
-        return ValidationResult::kMaxInitCodeSizeExceeded;
-    }
-
-    // EIP-4844: Shard Blob Transactions
-    if (txn.type == TransactionType::kBlob) {
-        if (txn.blob_versioned_hashes.empty()) {
-            return ValidationResult::kNoBlobs;
-        }
-        for (const Hash& h : txn.blob_versioned_hashes) {
-            if (h.bytes[0] != kBlobCommitmentVersionKzg) {
-                return ValidationResult::kWrongBlobCommitmentVersion;
-            }
-        }
-        SILKWORM_ASSERT(data_gas_price);
-        if (txn.max_fee_per_data_gas < data_gas_price) {
-            return ValidationResult::kMaxFeePerDataGasTooLow;
-        }
-        // TODO(yperbasis): There is an equal amount of versioned hashes, kzg commitments and blobs.
-        // The KZG commitments hash to the versioned hashes, i.e. kzg_to_versioned_hash(kzg[i]) == versioned_hash[i]
-        // The KZG commitments match the blob contents.
+    if (const auto forks_check = pre_validate_common_forks(txn, rev, blob_gas_price); forks_check != ValidationResult::kOk) {
+        return forks_check;
     }
 
     return ValidationResult::kOk;
@@ -121,22 +80,23 @@ ValidationResult pre_validate_transaction(const Transaction& txn, const evmc_rev
 
 ValidationResult validate_transaction(const Transaction& txn, const IntraBlockState& state,
                                       uint64_t available_gas) noexcept {
-    if (!txn.from) {
-        return ValidationResult::kMissingSender;
+    const std::optional<evmc::address> sender{txn.sender()};
+    if (!sender) {
+        return ValidationResult::kInvalidSignature;
     }
 
-    if (state.get_code_hash(*txn.from) != kEmptyHash) {
+    if (state.get_code_hash(*sender) != kEmptyHash) {
         return ValidationResult::kSenderNoEOA;  // EIP-3607
     }
 
-    const uint64_t nonce{state.get_nonce(*txn.from)};
+    const uint64_t nonce{state.get_nonce(*sender)};
     if (nonce != txn.nonce) {
         return ValidationResult::kWrongNonce;
     }
 
     // See YP, Eq (61) in Section 6.2 "Execution"
     const intx::uint512 v0{txn.maximum_gas_cost() + txn.value};
-    if (state.get_balance(*txn.from) < v0) {
+    if (state.get_balance(*sender) < v0) {
         return ValidationResult::kInsufficientFunds;
     }
 
@@ -153,11 +113,12 @@ ValidationResult validate_transaction(const Transaction& txn, const IntraBlockSt
 ValidationResult pre_validate_transactions(const Block& block, const ChainConfig& config, uint64_t evm_version, const evmone::gas_parameters& gas_params) {
     const BlockHeader& header{block.header};
     const evmc_revision rev{config.revision(header)};
-    const std::optional<intx::uint256> data_gas_price{header.data_gas_price()};
+    const std::optional<intx::uint256> blob_gas_price{header.blob_gas_price()};
 
     for (const Transaction& txn : block.transactions) {
         ValidationResult err{pre_validate_transaction(txn, rev, config.chain_id,
-                                                      header.base_fee_per_gas, data_gas_price, evm_version, gas_params)};
+                                                      header.base_fee_per_gas, blob_gas_price,
+                                                      evm_version, gas_params)};
         if (err != ValidationResult::kOk) {
             return err;
         }
@@ -166,11 +127,145 @@ ValidationResult pre_validate_transactions(const Block& block, const ChainConfig
     return ValidationResult::kOk;
 }
 
-std::optional<intx::uint256> expected_base_fee_per_gas(const BlockHeader& parent, const evmc_revision rev) {
-    if (rev < EVMC_LONDON) {
-        return std::nullopt;
+ValidationResult validate_call_precheck(const Transaction& txn, const EVM& evm, uint64_t evm_version, const evmone::gas_parameters& gas_params) noexcept {
+    const std::optional sender{txn.sender()};
+    if (!sender) {
+        return ValidationResult::kInvalidSignature;
     }
 
+    if (const auto common_check = pre_validate_common_base(txn, evm.revision(), evm.config().chain_id, evm_version, gas_params); common_check != ValidationResult::kOk) {
+        return common_check;
+    }
+
+    if (evm.revision() >= EVMC_LONDON) {
+        if (txn.max_fee_per_gas > 0 || txn.max_priority_fee_per_gas > 0) {
+            if (txn.max_fee_per_gas < txn.max_priority_fee_per_gas) {
+                return ValidationResult::kMaxPriorityFeeGreaterThanMax;
+            }
+
+            if (txn.max_fee_per_gas < evm.block().header.base_fee_per_gas) {
+                return ValidationResult::kMaxFeeLessThanBase;
+            }
+        }
+    }
+
+    if (const auto forks_check = pre_validate_common_forks(txn, evm.revision(), evm.block().header.blob_gas_price()); forks_check != ValidationResult::kOk) {
+        return forks_check;
+    }
+
+    return ValidationResult::kOk;
+}
+
+ValidationResult pre_validate_common_base(const Transaction& txn, evmc_revision revision, uint64_t chain_id, uint64_t evm_version, const evmone::gas_parameters& gas_params) noexcept {
+    if (txn.chain_id.has_value()) {
+        if (revision < EVMC_SPURIOUS_DRAGON) {
+            // EIP-155 transaction before EIP-155 was activated
+            return ValidationResult::kUnsupportedTransactionType;
+        }
+        if (txn.chain_id.value() != chain_id) {
+            return ValidationResult::kWrongChainId;
+        }
+    }
+
+    if (!transaction_type_is_supported(txn.type, revision)) {
+        return ValidationResult::kUnsupportedTransactionType;
+    }
+
+    const intx::uint128 g0{intrinsic_gas(txn, revision, evm_version, gas_params)};
+    if (txn.gas_limit < g0) {
+        return ValidationResult::kIntrinsicGas;
+    }
+
+    if (intx::count_significant_bytes(txn.maximum_gas_cost()) > 32) {
+        return ValidationResult::kInsufficientFunds;
+    }
+
+    // EIP-2681: Limit account nonce to 2^64-1
+    if (txn.nonce >= UINT64_MAX) {
+        return ValidationResult::kNonceTooHigh;
+    }
+
+    return ValidationResult::kOk;
+}
+
+ValidationResult pre_validate_common_forks(const Transaction& txn, const evmc_revision rev, const std::optional<intx::uint256>& blob_gas_price) noexcept {
+    // EIP-3860: Limit and meter initcode
+    const bool contract_creation{!txn.to};
+    if (rev >= EVMC_SHANGHAI && contract_creation && txn.data.size() > kMaxInitCodeSize) {
+        return ValidationResult::kMaxInitCodeSizeExceeded;
+    }
+
+    if (rev >= EVMC_CANCUN) {
+        // EIP-4844: Shard Blob Transactions
+        if (txn.type == TransactionType::kBlob) {
+            if (txn.blob_versioned_hashes.empty()) {
+                return ValidationResult::kNoBlobs;
+            }
+            for (const Hash& h : txn.blob_versioned_hashes) {
+                if (h.bytes[0] != kBlobCommitmentVersionKzg) {
+                    return ValidationResult::kWrongBlobCommitmentVersion;
+                }
+            }
+            SILKWORM_ASSERT(blob_gas_price);
+            if (txn.max_fee_per_blob_gas < blob_gas_price) {
+                return ValidationResult::kMaxFeePerBlobGasTooLow;
+            }
+            if (!txn.to) {
+                return ValidationResult::kProhibitedContractCreation;
+            }
+        }
+    }
+
+    if (rev >= EVMC_PRAGUE) {
+        // EIP-7702
+        if (txn.type == TransactionType::kSetCode) {
+            // Contract creation is disallowed for SetCode transactions
+            if (contract_creation) {
+                return ValidationResult::kProhibitedContractCreation;
+            }
+            if (std::empty(txn.authorizations)) {
+                return ValidationResult::kEmptyAuthorizations;
+            }
+        }
+    }
+    return ValidationResult::kOk;
+}
+
+ValidationResult validate_call_funds(const Transaction& txn, const EVM& evm, const intx::uint256& owned_funds, bool bailout) noexcept {
+    const intx::uint256 base_fee{evm.block().header.base_fee_per_gas.value_or(0)};
+    const intx::uint256 effective_gas_price{txn.max_fee_per_gas >= evm.block().header.base_fee_per_gas ? txn.effective_gas_price(base_fee)
+                                                                                                       : txn.max_priority_fee_per_gas};
+
+    const auto required_funds = compute_call_cost(txn, effective_gas_price, evm);
+    const intx::uint256 value = bailout ? 0 : txn.value;
+
+    if (owned_funds < required_funds + value) {
+        return ValidationResult::kInsufficientFunds;
+    }
+    return ValidationResult::kOk;
+}
+
+intx::uint256 compute_call_cost(const Transaction& txn, const intx::uint256& effective_gas_price, const EVM& evm) {
+    // EIP-1559 normal gas cost
+    intx::uint256 required_funds;
+    if (txn.max_fee_per_gas > 0 || txn.max_priority_fee_per_gas > 0) {
+        // This method should be called after check (max_fee and base_fee) present in pre_check() method
+        required_funds = txn.gas_limit * effective_gas_price;
+    } else {
+        required_funds = 0;
+    }
+
+    // EIP-4844 blob gas cost (calc_data_fee)
+    if (evm.block().header.blob_gas_used && evm.revision() >= EVMC_CANCUN) {
+        // compute blob fee for eip-4844 data blobs if any
+        const intx::uint256 blob_gas_price{evm.block().header.blob_gas_price().value_or(0)};
+        required_funds += txn.total_blob_gas() * blob_gas_price;
+    }
+
+    return required_funds;
+}
+
+intx::uint256 expected_base_fee_per_gas(const BlockHeader& parent) {
     if (!parent.base_fee_per_gas) {
         return kInitialBaseFee;
     }
@@ -190,31 +285,25 @@ std::optional<intx::uint256> expected_base_fee_per_gas(const BlockHeader& parent
             base_fee_per_gas_delta = 1;
         }
         return parent_base_fee_per_gas + base_fee_per_gas_delta;
-    } else {
-        const intx::uint256 gas_used_delta{parent_gas_target - parent.gas_used};
-        const intx::uint256 base_fee_per_gas_delta{parent_base_fee_per_gas * gas_used_delta / parent_gas_target /
-                                                   kBaseFeeMaxChangeDenominator};
-        if (parent_base_fee_per_gas > base_fee_per_gas_delta) {
-            return parent_base_fee_per_gas - base_fee_per_gas_delta;
-        } else {
-            return 0;
-        }
     }
+
+    const intx::uint256 gas_used_delta{parent_gas_target - parent.gas_used};
+    const intx::uint256 base_fee_per_gas_delta{parent_base_fee_per_gas * gas_used_delta / parent_gas_target /
+                                               kBaseFeeMaxChangeDenominator};
+    if (parent_base_fee_per_gas > base_fee_per_gas_delta) {
+        return parent_base_fee_per_gas - base_fee_per_gas_delta;
+    }
+    return 0;
 }
 
-std::optional<uint64_t> calc_excess_data_gas(const BlockHeader& parent, const evmc_revision rev) {
-    if (rev < EVMC_CANCUN) {
-        return std::nullopt;
-    }
+uint64_t calc_excess_blob_gas(const BlockHeader& parent) {
+    const uint64_t parent_excess_blob_gas{parent.excess_blob_gas.value_or(0)};
+    const uint64_t consumed_blob_gas{parent.blob_gas_used.value_or(0)};
 
-    const uint64_t parent_excess_data_gas{parent.excess_data_gas.value_or(0)};
-    const uint64_t consumed_data_gas{parent.data_gas_used.value_or(0)};
-
-    if (parent_excess_data_gas + consumed_data_gas < kTargetDataGasPerBlock) {
+    if (parent_excess_blob_gas + consumed_blob_gas < kTargetBlobGasPerBlock) {
         return 0;
-    } else {
-        return parent_excess_data_gas + consumed_data_gas - kTargetDataGasPerBlock;
     }
+    return parent_excess_blob_gas + consumed_blob_gas - kTargetBlobGasPerBlock;
 }
 
 evmc::bytes32 compute_transaction_root(const BlockBody& body) {
@@ -242,7 +331,46 @@ evmc::bytes32 compute_ommers_hash(const BlockBody& body) {
 
     Bytes ommers_rlp;
     rlp::encode(ommers_rlp, body.ommers);
-    return bit_cast<evmc_bytes32>(keccak256(ommers_rlp));
+    return std::bit_cast<evmc_bytes32>(keccak256(ommers_rlp));
+}
+
+ValidationResult validate_requests_root(const BlockHeader& header, const std::vector<Log>& logs, EVM& evm) {
+    FlatRequests requests;
+
+    // Dequeue deposit requests by parsing logs
+    requests.extract_deposits_from_logs(logs);
+
+    // Withdrawal requests
+    {
+        Transaction system_txn{};
+        system_txn.type = TransactionType::kSystem;
+        system_txn.to = kWithdrawalRequestAddress;
+        system_txn.data = Bytes{};
+        system_txn.set_sender(kSystemAddress);
+        const auto withdrawals = evm.execute(system_txn, kSystemCallGasLimit, {});
+        evm.state().destruct_touched_dead();
+        requests.add_request(FlatRequestType::kWithdrawalRequest, withdrawals.data);
+    }
+
+    // Consolidation requests
+    {
+        Transaction system_txn{};
+        system_txn.type = TransactionType::kSystem;
+        system_txn.to = kConsolidationRequestAddress;
+        system_txn.data = Bytes{};
+        system_txn.set_sender(kSystemAddress);
+        const auto consolidations = evm.execute(system_txn, kSystemCallGasLimit, {});
+        evm.state().destruct_touched_dead();
+        requests.add_request(FlatRequestType::kConsolidationRequest, consolidations.data);
+    }
+
+    const auto computed_hash = requests.calculate_sha256();
+
+    if (computed_hash != header.requests_hash) {
+        return ValidationResult::kRequestsRootMismatch;
+    }
+
+    return ValidationResult::kOk;
 }
 
 }  // namespace silkworm::protocol

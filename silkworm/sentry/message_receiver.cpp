@@ -19,30 +19,38 @@
 #include <algorithm>
 #include <memory>
 
-#include <boost/asio/co_spawn.hpp>
 #include <boost/asio/experimental/channel_error.hpp>
 #include <boost/asio/this_coro.hpp>
-#include <boost/asio/use_awaitable.hpp>
 #include <boost/system/errc.hpp>
 #include <boost/system/system_error.hpp>
 
 #include <silkworm/infra/common/log.hpp>
 #include <silkworm/infra/concurrency/awaitable_wait_for_all.hpp>
+#include <silkworm/infra/concurrency/spawn.hpp>
 
 namespace silkworm::sentry {
 
 using namespace boost::asio;
 
-Task<void> MessageReceiver::start(std::shared_ptr<MessageReceiver> self, PeerManager& peer_manager) {
+Task<void> MessageReceiver::run(std::shared_ptr<MessageReceiver> self, PeerManager& peer_manager) {
     using namespace concurrency::awaitable_wait_for_all;
 
     peer_manager.add_observer(std::weak_ptr(self));
 
-    auto start =
-        self->peer_tasks_.wait() &&
-        self->unsubscription_tasks_.wait() &&
-        self->handle_calls();
-    co_await co_spawn(self->strand_, std::move(start), use_awaitable);
+    try {
+        auto run =
+            self->peer_tasks_.wait() &&
+            self->unsubscription_tasks_.wait() &&
+            self->handle_calls();
+        co_await concurrency::spawn_task(self->strand_, std::move(run));
+    } catch (const boost::system::system_error& ex) {
+        SILK_ERROR_M("sentry") << "MessageReceiver::run ex=" << ex.what();
+        if (ex.code() == boost::system::errc::operation_canceled) {
+            // TODO(canepat) demote to debug after https://github.com/erigontech/silkworm/issues/2333 is solved
+            SILK_WARN_M("sentry") << "MessageReceiver::run operation_canceled";
+        }
+        throw;
+    }
 }
 
 Task<void> MessageReceiver::handle_calls() {
@@ -52,7 +60,7 @@ Task<void> MessageReceiver::handle_calls() {
     while (true) {
         auto call = co_await message_calls_channel_.receive();
 
-        auto messages_channel = std::make_shared<concurrency::Channel<api::api_common::MessageFromPeer>>(executor);
+        auto messages_channel = std::make_shared<concurrency::Channel<api::MessageFromPeer>>(executor);
 
         subscriptions_.push_back({
             messages_channel,
@@ -71,13 +79,13 @@ Task<void> MessageReceiver::unsubscribe_on_signal(std::shared_ptr<concurrency::E
         co_await unsubscribe_signal->wait();
     } catch (const boost::system::system_error& ex) {
         if (ex.code() == boost::system::errc::operation_canceled) {
-            log::Debug("sentry") << "MessageReceiver::unsubscribe_on_signal cancelled";
+            SILK_TRACE_M("sentry") << "MessageReceiver::unsubscribe_on_signal cancelled";
             co_return;
         }
-        log::Error("sentry") << "MessageReceiver::unsubscribe_on_signal system_error: " << ex.what();
+        SILK_ERROR_M("sentry") << "MessageReceiver::unsubscribe_on_signal system_error: " << ex.what();
         throw;
     } catch (const std::exception& ex) {
-        log::Error("sentry") << "MessageReceiver::unsubscribe_on_signal exception: " << ex.what();
+        SILK_ERROR_M("sentry") << "MessageReceiver::unsubscribe_on_signal exception: " << ex.what();
         throw;
     }
 
@@ -93,19 +101,19 @@ Task<void> MessageReceiver::unsubscribe_on_signal(std::shared_ptr<concurrency::E
 Task<void> MessageReceiver::receive_messages(std::shared_ptr<rlpx::Peer> peer) {
     // loop until DisconnectedError
     while (true) {
-        common::Message message;
+        Message message;
         try {
             message = co_await peer->receive_message();
-        } catch (const rlpx::Peer::DisconnectedError& ex) {
+        } catch (const rlpx::Peer::DisconnectedError&) {
             break;
         }
 
-        api::api_common::MessageFromPeer message_from_peer{
+        api::MessageFromPeer message_from_peer{
             std::move(message),
             {peer->peer_public_key()},
         };
 
-        std::list<std::shared_ptr<concurrency::Channel<api::api_common::MessageFromPeer>>> messages_channels;
+        std::list<std::shared_ptr<concurrency::Channel<api::MessageFromPeer>>> messages_channels;
         for (auto& subscription : subscriptions_) {
             if (subscription.message_id_filter.empty() || subscription.message_id_filter.contains(message_from_peer.message.id)) {
                 messages_channels.push_back(subscription.messages_channel);
@@ -134,18 +142,22 @@ void MessageReceiver::on_peer_added(std::shared_ptr<rlpx::Peer> peer) {
 void MessageReceiver::on_peer_removed(std::shared_ptr<rlpx::Peer> /*peer*/) {
 }
 
+// PeerManagerObserver
+void MessageReceiver::on_peer_connect_error(const EnodeUrl& /*peer_url*/) {
+}
+
 Task<void> MessageReceiver::on_peer_added_in_strand(std::shared_ptr<rlpx::Peer> peer) {
     try {
         co_await receive_messages(peer);
     } catch (const boost::system::system_error& ex) {
         if (ex.code() == boost::system::errc::operation_canceled) {
-            log::Debug("sentry") << "MessageReceiver::on_peer_added_in_strand cancelled";
+            SILK_DEBUG_M("sentry") << "MessageReceiver::on_peer_added_in_strand cancelled";
             co_return;
         }
-        log::Error("sentry") << "MessageReceiver::on_peer_added_in_strand system_error: " << ex.what();
+        SILK_ERROR_M("sentry") << "MessageReceiver::on_peer_added_in_strand system_error: " << ex.what();
         throw;
     } catch (const std::exception& ex) {
-        log::Error("sentry") << "MessageReceiver::on_peer_added_in_strand exception: " << ex.what();
+        SILK_ERROR_M("sentry") << "MessageReceiver::on_peer_added_in_strand exception: " << ex.what();
         throw;
     }
 }

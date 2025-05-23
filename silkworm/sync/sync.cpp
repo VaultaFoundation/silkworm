@@ -16,32 +16,35 @@
 
 #include "sync.hpp"
 
+#include <utility>
+
 #include <silkworm/infra/concurrency/awaitable_wait_for_all.hpp>
 
-#include "engine_api_backend.hpp"
 #include "sync_pos.hpp"
 #include "sync_pow.hpp"
 
 namespace silkworm::chainsync {
 
-Sync::Sync(boost::asio::io_context& io_context,
-           mdbx::env_managed& chaindata_env,
-           execution::Client& execution,
-           const std::shared_ptr<silkworm::sentry::api::api_common::SentryClient>& sentry_client,
+Sync::Sync(const boost::asio::any_io_executor& executor,
+           db::DataStoreRef data_store,
+           execution::api::Client& execution,
+           const std::shared_ptr<sentry::api::SentryClient>& sentry_client,
            const ChainConfig& config,
+           bool use_preverified_hashes,
            const EngineRpcSettings& rpc_settings)
-    : sync_sentry_client_{io_context, sentry_client},
-      block_exchange_{sync_sentry_client_, db::ROAccess{chaindata_env}, config} {
+    : sync_sentry_client_{executor, sentry_client},
+      block_exchange_{data_store, sync_sentry_client_, config, use_preverified_hashes} {
     // If terminal total difficulty is present in chain config, the network will use Proof-of-Stake sooner or later
-    if (config.terminal_total_difficulty()) {
+    if (config._terminal_total_difficulty.has_value()) {
         // Configure and activate the Execution Layer Engine API RPC server
         rpc::DaemonSettings engine_rpc_settings{
             .log_settings = {
                 .log_verbosity = rpc_settings.log_verbosity,
             },
+            .engine_ifc_log_settings = rpc_settings.engine_ifc_log_settings,
             .context_pool_settings{
-                .num_contexts = 1,                             // single-client so just one scheduler is OK
-                .wait_mode = concurrency::WaitMode::blocking,  // single-client so no need to play w/ strategies
+                // single-client so just one scheduler is OK
+                .num_contexts = 1,
             },
             .eth_end_point = "",  // no need for Ethereum JSON RPC end-point
             .engine_end_point = rpc_settings.engine_end_point,
@@ -50,52 +53,53 @@ Sync::Sync(boost::asio::io_context& io_context,
             .num_workers = 1,  // single-client so just one worker should be OK
             .jwt_secret_file = rpc_settings.jwt_secret_file,
         };
-        // TODO(canepat) replace customized std::shared_ptr by using ::mdbx::env instead of
-        //  std::shared_ptr<::mdbx::env_managed> in silkrpc classes (e.g. LocalState)
-        struct env_custom_deleter {
-            void operator()(mdbx::env_managed*) {}
-        };
-        std::shared_ptr<mdbx::env_managed> env_ptr{&chaindata_env, env_custom_deleter{}};
-        engine_rpc_server_ = std::make_unique<rpc::Daemon>(engine_rpc_settings, env_ptr);
+        engine_rpc_server_ = std::make_unique<rpc::Daemon>(engine_rpc_settings, data_store);
 
         // Create the synchronization algorithm based on Casper + LMD-GHOST, i.e. PoS
-        auto pos_sync = std::make_unique<PoSSync>(block_exchange_, execution);
-        engine_rpc_server_->add_backend_service(std::make_unique<EngineApiBackend>(*pos_sync));
+        auto pos_sync = std::make_shared<PoSSync>(block_exchange_, execution);
+        std::vector<std::shared_ptr<rpc::engine::ExecutionEngine>> engines{pos_sync};  // just one PoS-based Engine backend
+        engine_rpc_server_->add_execution_services(engines);
         chain_sync_ = std::move(pos_sync);
     } else {
         // Create the synchronization algorithm based on GHOST, i.e. PoW
-        chain_sync_ = std::make_unique<PoWSync>(block_exchange_, execution);
+        chain_sync_ = std::make_shared<PoWSync>(block_exchange_, execution);
     }
 }
 
-void Sync::force_pow(execution::Client& execution) {
-    chain_sync_ = std::make_unique<PoWSync>(block_exchange_, execution);
-    engine_rpc_server_.reset();
+BlockNum Sync::last_pre_validated_block() const {
+    return block_exchange_.last_pre_validated_block();
 }
 
-boost::asio::awaitable<void> Sync::async_run() {
+Task<void> Sync::async_run() {
     using namespace concurrency::awaitable_wait_for_all;
     return (run_tasks() && start_engine_rpc_server());
 }
 
-boost::asio::awaitable<void> Sync::run_tasks() {
+Task<void> Sync::run_tasks() {
     using namespace concurrency::awaitable_wait_for_all;
     co_await (start_sync_sentry_client() && start_block_exchange() && start_chain_sync());
 }
 
-boost::asio::awaitable<void> Sync::start_sync_sentry_client() {
+Task<void> Sync::start_sync_sentry_client() {
     return sync_sentry_client_.async_run();
 }
 
-boost::asio::awaitable<void> Sync::start_block_exchange() {
-    return block_exchange_.async_run();
+Task<void> Sync::start_block_exchange() {
+    return block_exchange_.async_run("block-exchg");
 }
 
-boost::asio::awaitable<void> Sync::start_chain_sync() {
-    return chain_sync_->async_run();
+Task<void> Sync::start_chain_sync() {
+    if (!engine_rpc_server_) {
+        return chain_sync_->async_run();
+    }
+
+    // The ChainSync async loop *must* run onto the Engine RPC server unique execution context
+    // This is *strictly* required by the current design assumptions in PoSSync
+    auto& ioc = engine_rpc_server_->context_pool().next_ioc();
+    return boost::asio::co_spawn(ioc, chain_sync_->async_run(), boost::asio::use_awaitable);
 }
 
-boost::asio::awaitable<void> Sync::start_engine_rpc_server() {
+Task<void> Sync::start_engine_rpc_server() {
     if (engine_rpc_server_) {
         auto engine_rpc_server_run = [this]() {
             engine_rpc_server_->start();
@@ -104,7 +108,9 @@ boost::asio::awaitable<void> Sync::start_engine_rpc_server() {
         auto engine_rpc_server_stop = [this]() {
             engine_rpc_server_->stop();
         };
-        co_await concurrency::async_thread(std::move(engine_rpc_server_run), std::move(engine_rpc_server_stop));
+        co_await concurrency::async_thread(std::move(engine_rpc_server_run),
+                                           std::move(engine_rpc_server_stop),
+                                           "eng-api-srv");
     }
 }
 

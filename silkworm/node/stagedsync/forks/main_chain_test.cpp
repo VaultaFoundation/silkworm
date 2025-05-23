@@ -16,79 +16,175 @@
 
 #include "main_chain.hpp"
 
-#include <iostream>
-
 #include <boost/asio/io_context.hpp>
-#include <catch2/catch.hpp>
+#include <catch2/catch_test_macros.hpp>
 
-#include <silkworm/core/common/cast.hpp>
+#include <silkworm/core/common/bytes_to_string.hpp>
+#include <silkworm/core/common/empty_hashes.hpp>
+#include <silkworm/core/test_util/sample_blocks.hpp>
 #include <silkworm/core/types/block.hpp>
+#include <silkworm/db/genesis.hpp>
+#include <silkworm/db/stages.hpp>
+#include <silkworm/db/test_util/temp_chain_data.hpp>
 #include <silkworm/infra/common/environment.hpp>
-#include <silkworm/infra/test/log.hpp>
-#include <silkworm/node/common/preverified_hashes.hpp>
-#include <silkworm/node/db/genesis.hpp>
-#include <silkworm/node/db/stages.hpp>
-#include <silkworm/node/test/context.hpp>
+#include <silkworm/infra/test_util/log.hpp>
+#include <silkworm/node/test_util/make_stages_factory.hpp>
+#include <silkworm/node/test_util/temp_chain_data_node_settings.hpp>
 
 namespace silkworm {
 
 namespace asio = boost::asio;
+using namespace silkworm::db;
+using namespace silkworm::test_util;
 using namespace stagedsync;
 using namespace intx;  // just for literals
 
-class MainChain_ForTest : public stagedsync::MainChain {
+using execution::api::InvalidChain;
+using execution::api::ValidationError;
+using execution::api::ValidChain;
+using silkworm::stagedsync::test_util::make_stages_factory;
+
+class MainChainForTest : public stagedsync::MainChain {
   public:
-    using stagedsync::MainChain::canonical_chain_;
-    using stagedsync::MainChain::canonical_head_status_;
     using stagedsync::MainChain::current_head;
     using stagedsync::MainChain::insert_block;
+    using stagedsync::MainChain::interim_canonical_chain_;
+    using stagedsync::MainChain::interim_head_status_;
     using stagedsync::MainChain::MainChain;
     using stagedsync::MainChain::pipeline_;
-    using stagedsync::MainChain::tx_;
 };
 
-static Block generateSampleChildrenBlock(const BlockHeader& parent) {
-    Block block;
-    auto parent_hash = parent.hash();
+TEST_CASE("MainChain transaction handling") {
+    for (int i = 0; i < 2; ++i) {
+        auto keep_db_txn_open = i == 1;
 
-    // BlockHeader
-    block.header.number = parent.number + 1;
-    block.header.difficulty = 17'000'000'000 + block.header.number;
-    block.header.parent_hash = parent_hash;
-    block.header.beneficiary = 0xc8ebccc5f5689fa8659d83713341e5ad19349448_address;
-    block.header.state_root = kEmptyRoot;
-    block.header.receipts_root = kEmptyRoot;
-    block.header.gas_limit = 10'000'000;
-    block.header.gas_used = 0;
-    block.header.timestamp = parent.timestamp + 12;
-    block.header.extra_data = {};
+        SECTION("keep_db_txn_open = " + std::to_string(keep_db_txn_open)) {
+            asio::io_context ioc;
+            asio::executor_work_guard<decltype(ioc.get_executor())> work{ioc.get_executor()};
 
-    return block;
+            db::test_util::TempChainDataStore context;
+            context.add_genesis_data();
+            context.commit_txn();
+
+            db::DataModelFactory data_model_factory = context.data_model_factory();
+
+            Environment::set_stop_before_stage(stages::kSendersKey);  // only headers, block hashes and bodies
+
+            NodeSettings node_settings = node::test_util::make_node_settings_from_temp_chain_data(context);
+            node_settings.keep_db_txn_open = keep_db_txn_open;
+            MainChainForTest main_chain{
+                ioc.get_executor(),
+                node_settings,
+                data_model_factory,
+                /* log_timer_factory = */ std::nullopt,
+                make_stages_factory(node_settings, data_model_factory),
+                context.chaindata_rw(),
+            };
+            main_chain.open();
+
+            auto& tx = main_chain.tx();
+
+            SECTION("multiple reads") {
+                auto hash0 = main_chain.get_finalized_canonical_hash(0);
+                REQUIRE(hash0.has_value());
+                CHECK(tx.is_open() == keep_db_txn_open);
+
+                auto header0 = main_chain.get_header(0, *hash0);
+                REQUIRE(header0.has_value());
+                CHECK(tx.is_open() == keep_db_txn_open);
+
+                auto body0 = main_chain.get_body(*hash0);
+                REQUIRE(body0.has_value());
+                CHECK(tx.is_open() == keep_db_txn_open);
+
+                auto td0 = main_chain.get_header_td(0, *hash0);
+                REQUIRE(td0.has_value());
+                CHECK(tx.is_open() == keep_db_txn_open);
+
+                auto block_num0 = main_chain.get_block_num(*hash0);
+                REQUIRE(block_num0.has_value());
+                CHECK(block_num0 == 0);
+                CHECK(tx.is_open() == keep_db_txn_open);
+            }
+
+            SECTION("multiple inserts") {
+                auto hash0 = main_chain.get_finalized_canonical_hash(0);
+                auto header0 = main_chain.get_header(0, *hash0);
+
+                auto block1 = generate_sample_child_blocks(*header0);
+                auto block1_hash = block1->header.hash();
+                main_chain.insert_block(*block1);
+                CHECK(tx.is_open() == keep_db_txn_open);
+
+                auto header1 = main_chain.get_header(1, block1_hash);
+                REQUIRE(header1.has_value());
+                CHECK(tx.is_open() == keep_db_txn_open);
+
+                auto block2 = generate_sample_child_blocks(*header1);
+                auto block2_hash = block2->header.hash();
+                main_chain.insert_block(*block2);
+                CHECK(tx.is_open() == keep_db_txn_open);
+
+                auto header2 = main_chain.get_header(2, block2_hash);
+                REQUIRE(header2.has_value());
+                CHECK(tx.is_open() == keep_db_txn_open);
+            }
+
+            SECTION("completes fork choice update") {
+                auto hash0 = main_chain.get_finalized_canonical_hash(0);
+                auto header0 = main_chain.get_header(0, *hash0);
+
+                auto block1 = generate_sample_child_blocks(*header0);
+                auto block1_hash = block1->header.hash();
+                main_chain.insert_block(*block1);
+                CHECK(tx.is_open() == keep_db_txn_open);
+
+                auto verification1 = main_chain.verify_chain(block1_hash);
+                REQUIRE(holds_alternative<ValidChain>(verification1));
+                CHECK(tx.is_open() == keep_db_txn_open);
+
+                auto fcu_updated = main_chain.notify_fork_choice_update(block1_hash);
+                CHECK(fcu_updated);
+                CHECK(tx.is_open() == keep_db_txn_open);
+
+                auto hash1 = main_chain.get_finalized_canonical_hash(1);
+                REQUIRE(hash1.has_value());
+                CHECK(tx.is_open() == keep_db_txn_open);
+            }
+        }
+    }
 }
 
 TEST_CASE("MainChain") {
-    test::SetLogVerbosityGuard log_guard(log::Level::kNone);
+    asio::io_context ioc;
+    asio::executor_work_guard<decltype(ioc.get_executor())> work{ioc.get_executor()};
 
-    asio::io_context io;
-    asio::executor_work_guard<decltype(io.get_executor())> work{io.get_executor()};
-
-    test::Context context;
+    db::test_util::TempChainDataStore context;
     context.add_genesis_data();
     context.commit_txn();
 
-    PreverifiedHashes::current.clear();                           // disable preverified hashes
-    Environment::set_stop_before_stage(db::stages::kSendersKey);  // only headers, block hashes and bodies
+    db::DataModelFactory data_model_factory = context.data_model_factory();
 
-    db::RWAccess db_access{context.env()};
-    MainChain_ForTest main_chain{io, context.node_settings(), db_access};
+    Environment::set_stop_before_stage(stages::kSendersKey);  // only headers, block hashes and bodies
+
+    NodeSettings node_settings = node::test_util::make_node_settings_from_temp_chain_data(context);
+    auto db_access = context.chaindata_rw();
+    MainChainForTest main_chain{
+        ioc.get_executor(),
+        node_settings,
+        data_model_factory,
+        /* log_timer_factory = */ std::nullopt,
+        make_stages_factory(node_settings, data_model_factory),
+        db_access,
+    };
     main_chain.open();
 
     auto& tx = main_chain.tx();
 
-    auto header0_hash = db::read_canonical_hash(tx, 0);
+    auto header0_hash = read_canonical_header_hash(tx, 0);
     REQUIRE(header0_hash.has_value());
 
-    auto header0 = db::read_canonical_header(tx, 0);
+    auto header0 = read_canonical_header(tx, 0);
     REQUIRE(header0.has_value());
 
     BlockId block0_id{0, *header0_hash};
@@ -100,8 +196,8 @@ TEST_CASE("MainChain") {
     auto initial_canonical_head = main_chain.current_head();
     REQUIRE(initial_canonical_head == block0_id);
     REQUIRE(main_chain.last_chosen_head() == block0_id);
-    REQUIRE(initial_canonical_head.number == initial_progress);
-    REQUIRE(main_chain.canonical_chain_.current_head() == initial_canonical_head);
+    REQUIRE(initial_canonical_head.block_num == initial_progress);
+    REQUIRE(main_chain.interim_canonical_chain_.current_head() == initial_canonical_head);
 
     /* status:
      *         h0
@@ -123,7 +219,7 @@ TEST_CASE("MainChain") {
 
         // check db
         BlockBody saved_body;
-        bool present = db::read_body(tx, block1_hash, block1.header.number, saved_body);
+        bool present = read_body(tx, block1_hash, block1.header.number, saved_body);
         REQUIRE(present);
 
         auto progress = main_chain.get_block_progress();
@@ -135,11 +231,11 @@ TEST_CASE("MainChain") {
         // verifying the chain
         auto verification = main_chain.verify_chain(block1_hash);
 
-        CHECK(db::stages::read_stage_progress(tx, db::stages::kHeadersKey) == 1);
-        CHECK(db::stages::read_stage_progress(tx, db::stages::kBlockHashesKey) == 1);
-        CHECK(db::stages::read_stage_progress(tx, db::stages::kBlockBodiesKey) == 1);
-        CHECK(db::stages::read_stage_progress(tx, db::stages::kSendersKey) == 0);
-        CHECK(db::stages::read_stage_progress(tx, db::stages::kExecutionKey) == 0);
+        CHECK(stages::read_stage_progress(tx, stages::kHeadersKey) == 1);
+        CHECK(stages::read_stage_progress(tx, stages::kBlockHashesKey) == 1);
+        CHECK(stages::read_stage_progress(tx, stages::kBlockBodiesKey) == 1);
+        CHECK(stages::read_stage_progress(tx, stages::kSendersKey) == 0);
+        CHECK(stages::read_stage_progress(tx, stages::kExecutionKey) == 0);
 
         CHECK(!holds_alternative<ValidationError>(verification));
         REQUIRE(holds_alternative<InvalidChain>(verification));
@@ -157,14 +253,14 @@ TEST_CASE("MainChain") {
 
         auto final_canonical_head = main_chain.current_head();
         REQUIRE(final_canonical_head == block1_id);
-        REQUIRE(main_chain.canonical_chain_.current_head() == block1_id);
+        REQUIRE(main_chain.interim_canonical_chain_.current_head() == block1_id);
         REQUIRE(main_chain.last_chosen_head() == block0_id);  // not changed
 
-        auto current_status = main_chain.canonical_head_status_;
+        auto current_status = main_chain.interim_head_status_;
         REQUIRE(holds_alternative<InvalidChain>(current_status));
 
         // check canonical
-        auto present_in_canonical = main_chain.get_canonical_hash(block1.header.number);
+        auto present_in_canonical = main_chain.get_finalized_canonical_hash(block1.header.number);
         REQUIRE(!present_in_canonical);
 
         // reverting the chain
@@ -172,17 +268,16 @@ TEST_CASE("MainChain") {
         CHECK(updated);
 
         // checking the status
-        present_in_canonical = main_chain.get_canonical_hash(block1.header.number);
+        present_in_canonical = main_chain.get_finalized_canonical_hash(block1.header.number);
         REQUIRE(!present_in_canonical);
 
         final_canonical_head = main_chain.current_head();
-        REQUIRE(final_canonical_head == initial_canonical_head);
-        REQUIRE(main_chain.canonical_chain_.current_head() == initial_canonical_head);
-        REQUIRE(main_chain.last_chosen_head() == block0_id);  // not changed
+        CHECK(final_canonical_head == block1_id);           // still block1 even if invalid
+        CHECK(main_chain.last_chosen_head() == block0_id);  // not changed
 
-        current_status = main_chain.canonical_head_status_;
-        REQUIRE(holds_alternative<ValidChain>(current_status));
-        REQUIRE(std::get<ValidChain>(current_status).current_head == block0_id);
+        current_status = main_chain.interim_head_status_;
+        CHECK(holds_alternative<InvalidChain>(current_status));
+        CHECK(std::get<InvalidChain>(current_status).unwind_point == block0_id);
     }
 
     SECTION("one valid body after the genesis") {
@@ -224,18 +319,18 @@ TEST_CASE("MainChain") {
         REQUIRE(final_canonical_head == block1_id);
         REQUIRE(main_chain.last_chosen_head() == block0_id);  // not changed
 
-        REQUIRE(main_chain.canonical_chain_.current_head() == block1_id);
+        REQUIRE(main_chain.interim_canonical_chain_.current_head() == block1_id);
 
-        auto current_status = main_chain.canonical_head_status_;
+        auto current_status = main_chain.interim_head_status_;
         REQUIRE(holds_alternative<ValidChain>(current_status));
         REQUIRE(std::get<ValidChain>(current_status).current_head == block1_id);
 
         // check db content
         BlockBody saved_body;
-        bool present = db::read_body(tx, block1_hash, block1.header.number, saved_body);
+        bool present = read_body(tx, block1_hash, block1.header.number, saved_body);
         REQUIRE(present);
 
-        auto present_in_canonical = main_chain.get_canonical_hash(block1.header.number);
+        auto present_in_canonical = main_chain.get_finalized_canonical_hash(block1.header.number);
         REQUIRE(!present_in_canonical);  // not yet
 
         // confirming the chain
@@ -243,12 +338,11 @@ TEST_CASE("MainChain") {
         CHECK(updated);
 
         // checking the status
-        present_in_canonical = main_chain.get_canonical_hash(block1.header.number);
+        present_in_canonical = main_chain.get_finalized_canonical_hash(block1.header.number);
         REQUIRE(present_in_canonical);
 
         final_canonical_head = main_chain.current_head();
         REQUIRE(final_canonical_head == block1_id);
-        REQUIRE(main_chain.canonical_chain_.current_head() == block1_id);
         REQUIRE(main_chain.last_chosen_head() == block1_id);
 
         // testing other methods
@@ -274,41 +368,38 @@ TEST_CASE("MainChain") {
         extends_canonical = main_chain.extends_last_fork_choice(block3.header.number, block3.header.hash());
         CHECK(extends_canonical);
 
-        // reverting the chain simulating invalid block
-        main_chain.canonical_head_status_ = InvalidChain{BlockId{1, block1_hash}};
-        updated = main_chain.notify_fork_choice_update(*header0_hash);
-        CHECK(updated);
+        // Testing a mini re-org
+        auto new_block1 = generate_sample_child_blocks(*header0);
+        const auto new_block1_hash{new_block1->header.hash()};
+        BlockId new_block1_id{1, new_block1_hash};
 
-        // checking the status
-        present_in_canonical = main_chain.get_canonical_hash(block1.header.number);
-        REQUIRE(!present_in_canonical);
+        // inserting & verifying the block
+        main_chain.insert_block(*new_block1);
+        const auto new_verification1 = main_chain.verify_chain(new_block1_hash);
+        CHECK(holds_alternative<ValidChain>(new_verification1));
+        CHECK(std::get<ValidChain>(new_verification1).current_head == new_block1_id);
 
-        final_canonical_head = main_chain.current_head();
-        REQUIRE(final_canonical_head == initial_canonical_head);
-        REQUIRE(main_chain.canonical_chain_.current_head() == initial_canonical_head);
-        REQUIRE(main_chain.last_chosen_head() == block0_id);
-
-        current_status = main_chain.canonical_head_status_;
-        REQUIRE(holds_alternative<ValidChain>(current_status));
-        REQUIRE(std::get<ValidChain>(current_status).current_head == block0_id);
+        // confirming the chain
+        const auto new_block1_updated = main_chain.notify_fork_choice_update(new_block1_hash);
+        CHECK(new_block1_updated);
     }
 
     SECTION("diverting the head") {
-        Block block1 = generateSampleChildrenBlock(*header0);
+        auto block1 = generate_sample_child_blocks(*header0);
 
-        Block block2 = generateSampleChildrenBlock(block1.header);
+        auto block2 = generate_sample_child_blocks(block1->header);
 
-        Block block3 = generateSampleChildrenBlock(block2.header);
-        auto block3_hash = block3.header.hash();
+        auto block3 = generate_sample_child_blocks(block2->header);
+        auto block3_hash = block3->header.hash();
         BlockId block3_id{3, block3_hash};
 
         // inserting & verifying the block
-        main_chain.insert_block(block1);
-        main_chain.insert_block(block2);
-        main_chain.insert_block(block3);
+        main_chain.insert_block(*block1);
+        main_chain.insert_block(*block2);
+        main_chain.insert_block(*block3);
 
         auto block_progress = main_chain.get_block_progress();
-        REQUIRE(block_progress == block3.header.number);
+        REQUIRE(block_progress == block3->header.number);
 
         auto verification = main_chain.verify_chain(block3_hash);
 
@@ -322,18 +413,18 @@ TEST_CASE("MainChain") {
 
         auto final_canonical_head = main_chain.current_head();
         CHECK(final_canonical_head == block3_id);
-        CHECK(main_chain.canonical_chain_.current_head() == block3_id);
+        CHECK(main_chain.interim_canonical_chain_.current_head() == block3_id);
         REQUIRE(main_chain.last_chosen_head() == block3_id);  // not changed
 
         // Creating a fork and changing the head (trigger unwind)
         {
-            Block block2b = generateSampleChildrenBlock(block1.header);
-            block2b.header.extra_data = string_view_to_byte_view("I'm different");  // to make it different from block2
-            auto block2b_hash = block2b.header.hash();
+            auto block2b = generate_sample_child_blocks(block1->header);
+            block2b->header.extra_data = string_view_to_byte_view("I'm different");  // to make it different from block2
+            auto block2b_hash = block2b->header.hash();
             BlockId block2b_id{2, block2b_hash};
 
             // inserting & verifying the block
-            main_chain.insert_block(block2b);
+            main_chain.insert_block(*block2b);
             verification = main_chain.verify_chain(block2b_hash);
 
             REQUIRE(holds_alternative<ValidChain>(verification));
@@ -346,7 +437,7 @@ TEST_CASE("MainChain") {
 
             final_canonical_head = main_chain.current_head();
             CHECK(final_canonical_head == block2b_id);
-            CHECK(main_chain.canonical_chain_.current_head() == block2b_id);
+            CHECK(main_chain.interim_canonical_chain_.current_head() == block2b_id);
             REQUIRE(main_chain.last_chosen_head() == block2b_id);  // not changed
         }
     }
@@ -370,7 +461,14 @@ TEST_CASE("MainChain") {
         main_chain.close();
 
         // opening another main chain (-> application start up)
-        MainChain_ForTest main_chain2{io, context.node_settings(), db_access};
+        MainChainForTest main_chain2{
+            ioc.get_executor(),
+            node_settings,
+            main_chain.data_model_factory(),
+            /* log_timer_factory = */ std::nullopt,
+            main_chain.stages_factory(),
+            db_access,
+        };
         main_chain2.open();
 
         // checking that the initial state sees the prev fcu
@@ -378,7 +476,7 @@ TEST_CASE("MainChain") {
         CHECK(main_chain2.last_chosen_head() == block1_id);
         CHECK(main_chain2.last_finalized_head() == block0_id);
 
-        CHECK(holds_alternative<ValidChain>(main_chain2.canonical_head_status_));
+        CHECK(holds_alternative<ValidChain>(main_chain2.interim_head_status_));
     }
 }
 

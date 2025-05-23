@@ -16,9 +16,14 @@
 
 #include "util.hpp"
 
-#include <catch2/catch.hpp>
+#include <catch2/catch_test_macros.hpp>
+
+#include <silkworm/core/test_util/null_stream.hpp>
+#include <silkworm/core/types/evmc_bytes32.hpp>
 
 namespace silkworm {
+
+using namespace evmc::literals;
 
 TEST_CASE("Hex") {
     CHECK(decode_hex_digit('g').has_value() == false);
@@ -39,7 +44,7 @@ TEST_CASE("Hex") {
     parsed_bytes = from_hex("0x0");
     CHECK((parsed_bytes.has_value() == true && parsed_bytes.value() == expected_bytes));
 
-    expected_bytes = {0x0a};
+    expected_bytes = Bytes{0x0a};
     parsed_bytes = from_hex("0xa");
     CHECK((parsed_bytes.has_value() == true && parsed_bytes.value() == expected_bytes));
 
@@ -91,9 +96,23 @@ TEST_CASE("Integrals to hex") {
 }
 
 TEST_CASE("Zeroless view") {
-    CHECK(to_hex(zeroless_view(0x0000000000000000000000000000000000000000000000000000000000000000_bytes32)).empty());
-    CHECK(to_hex(zeroless_view(0x000000000000000000000000000000000000000000000000000000000004bc00_bytes32)) ==
-          "04bc00");
+    SECTION("from bytes32") {
+        CHECK(to_hex(zeroless_view((0x0000000000000000000000000000000000000000000000000000000000000000_bytes32).bytes)).empty());
+        CHECK(to_hex(zeroless_view((0x000000000000000000000000000000000000000000000000000000000004bc00_bytes32).bytes)) ==
+              "04bc00");
+        CHECK(to_hex(zeroless_view((0x100000000000000000000000000000000000000000000000000000000004bc00_bytes32).bytes)) ==
+              "100000000000000000000000000000000000000000000000000000000004bc00");
+    }
+    SECTION("from Bytes") {
+        Bytes block_num_as_bytes(sizeof(BlockNum), '\0');
+        intx::be::unsafe::store<uint64_t>(block_num_as_bytes.data(), 12'209'569);
+        CHECK(to_hex(zeroless_view(block_num_as_bytes)) == "ba4da1");
+    }
+    SECTION("from ByteView") {
+        CHECK(to_hex(zeroless_view(ByteView{})).empty());
+        CHECK(to_hex(zeroless_view(ByteView{{0x01, 0x00}})) == "0100");
+        CHECK(to_hex(zeroless_view(ByteView{{00, 01}})) == "01");
+    }
 }
 
 TEST_CASE("to_bytes32") {
@@ -173,17 +192,13 @@ TEST_CASE("human_size") {
 }
 
 TEST_CASE("intx::uint256 from scientific notation string") {
-    const intx::uint256 kMainnetTTD{intx::from_string<intx::uint256>("58750000000000000000000")};
+    static constexpr intx::uint256 kMainnetTTD{intx::from_string<intx::uint256>("58750000000000000000000")};
     CHECK(from_string_sci<intx::uint256>("5.875e+22") == kMainnetTTD);
     CHECK(from_string_sci<intx::uint256>("58750000000000000000000") == kMainnetTTD);
 
-    const intx::uint256 kSepoliaTTD{intx::from_string<intx::uint256>("17000000000000000")};
+    static constexpr intx::uint256 kSepoliaTTD{intx::from_string<intx::uint256>("17000000000000000")};
     CHECK(from_string_sci<intx::uint256>("1.7e+16") == kSepoliaTTD);
     CHECK(from_string_sci<intx::uint256>("17000000000000000") == kSepoliaTTD);
-
-    const intx::uint256 kGoerliTTD{intx::from_string<intx::uint256>("10790000")};
-    CHECK(from_string_sci<intx::uint256>("1.079e+7") == kGoerliTTD);
-    CHECK(from_string_sci<intx::uint256>("10790000") == kGoerliTTD);
 
     CHECK(from_string_sci<intx::uint256>("0") == intx::from_string<intx::uint256>("0"));
     CHECK(from_string_sci<intx::uint256>("0e+0") == intx::from_string<intx::uint256>("0"));
@@ -196,9 +211,9 @@ TEST_CASE("intx::uint256 from scientific notation string") {
     CHECK(from_string_sci<intx::uint256>("18.1e+2") == intx::from_string<intx::uint256>("1810"));
     CHECK(from_string_sci<intx::uint256>("18.12e+2") == intx::from_string<intx::uint256>("1812"));
 
-    const auto kMaxFixedDecimalNotation{"115792089237316195423570985008687907853269984665640564039457584007913129639935"};
+    static constexpr char kMaxFixedDecimalNotation[] = "115792089237316195423570985008687907853269984665640564039457584007913129639935";
     CHECK(from_string_sci<intx::uint256>(kMaxFixedDecimalNotation) == std::numeric_limits<intx::uint256>::max());
-    const auto kMaxScientificNotation{"1.15792089237316195423570985008687907853269984665640564039457584007913129639935e+77"};
+    static constexpr char kMaxScientificNotation[] = "1.15792089237316195423570985008687907853269984665640564039457584007913129639935e+77";
     CHECK(from_string_sci<intx::uint256>(kMaxScientificNotation) == std::numeric_limits<intx::uint256>::max());
 }
 
@@ -207,6 +222,24 @@ TEST_CASE("intx::uint256 to_float") {
     CHECK(to_float(1) == 1.f);
     CHECK(to_float(24) == 24.f);
     CHECK(to_float(intx::from_string<intx::uint256>("1000000000000000000000000")) == 1e24f);
+}
+
+TEST_CASE("print intx::uint256") {
+    const intx::uint256 i{intx::from_string<intx::uint256>("1000000000000000000000000")};
+    CHECK(test_util::null_stream() << i);
+}
+
+TEST_CASE("print Bytes") {
+    Bytes b{};
+    CHECK(test_util::null_stream() << b);
+}
+
+TEST_CASE("print ByteView") {
+    ByteView bv1;
+    CHECK(test_util::null_stream() << bv1);
+    Bytes b{*from_hex("0x0608")};
+    ByteView bv2{b};
+    CHECK(test_util::null_stream() << bv2);
 }
 
 }  // namespace silkworm

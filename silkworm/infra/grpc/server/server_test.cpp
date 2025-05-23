@@ -17,16 +17,17 @@
 #include "server.hpp"
 
 #include <stdexcept>
+#include <string_view>
 #include <thread>
 
-#include <catch2/catch.hpp>
+#include <catch2/catch_test_macros.hpp>
 #include <grpc/grpc.h>
 #include <grpcpp/alarm.h>
 #include <grpcpp/impl/codegen/service_type.h>
 
 #include <silkworm/infra/common/log.hpp>
 #include <silkworm/infra/grpc/common/util.hpp>
-#include <silkworm/infra/test/log.hpp>
+#include <silkworm/infra/test_util/log.hpp>
 
 namespace silkworm::rpc {
 
@@ -48,13 +49,13 @@ namespace {  // Trick suggested by gRPC team to avoid name clashes in multiple t
     };
 }  // namespace
 
-// TODO(canepat): better copy grpc_pick_unused_port_or_die to generate unused port
-static const std::string kTestAddressUri{"localhost:12345"};
-
 // Exclude gRPC tests from sanitizer builds due to data race warnings inside gRPC library
 #ifndef SILKWORM_SANITIZE
+
+// TODO(canepat): better copy grpc_pick_unused_port_or_die to generate unused port
+static constexpr std::string_view kTestAddressUri{"localhost:12345"};
+
 TEST_CASE("Barebone gRPC Server", "[silkworm][node][rpc]") {
-    test::SetLogVerbosityGuard guard{log::Level::kNone};
     grpc::ServerBuilder builder;
     // Add *at least one non-empty* ServerCompletionQueue (otherwise: ASAN SIGSEGV error in Shutdown)
     std::unique_ptr<grpc::ServerCompletionQueue> cq = builder.AddCompletionQueue();
@@ -67,16 +68,14 @@ TEST_CASE("Barebone gRPC Server", "[silkworm][node][rpc]") {
     server->Shutdown();
     // Then, shutdown and drain the ServerCompletionQueue
     cq->Shutdown();
-    void* tag;
-    bool ok;
+    void* tag{nullptr};
+    bool ok{false};
     CHECK(cq->Next(&tag, &ok) == true);
     CHECK(tag == reinterpret_cast<void*>(0));
     CHECK(cq->Next(&tag, &ok) == false);
 }
 
 TEST_CASE("Server::Server", "[silkworm][node][rpc]") {
-    test::SetLogVerbosityGuard guard{log::Level::kNone};
-
     SECTION("OK: create an empty Server", "[silkworm][node][rpc]") {
         ServerSettings settings;
         settings.address_uri = kTestAddressUri;
@@ -85,8 +84,6 @@ TEST_CASE("Server::Server", "[silkworm][node][rpc]") {
 }
 
 TEST_CASE("Server::build_and_start", "[silkworm][node][rpc]") {
-    test::SetLogVerbosityGuard set_log_verbosity_guard{log::Level::kNone};
-
     // TODO(canepat): use GMock
     class TestServer : public EmptyServer {
       public:
@@ -108,9 +105,9 @@ TEST_CASE("Server::build_and_start", "[silkworm][node][rpc]") {
         bool register_request_calls_called_{false};
     };
 
-    SECTION("KO: Address already in use", "[silkworm][node][rpc]") {
-        GrpcNoLogGuard guard;
+    log::init();
 
+    SECTION("KO: Address already in use", "[silkworm][node][rpc]") {
         ServerSettings settings;
         settings.address_uri = kTestAddressUri;
         TestServer server1{settings};
@@ -121,8 +118,6 @@ TEST_CASE("Server::build_and_start", "[silkworm][node][rpc]") {
     }
 
     SECTION("KO: Name or service not known", "[silkworm][node][rpc]") {
-        GrpcNoLogGuard guard;
-
         ServerSettings settings;
         settings.address_uri = "local:12345";  // "localhost@12345" core dumped in gRPC 1.44.0-p0 (SIGSEGV)
         EmptyServer server{settings};
@@ -140,7 +135,6 @@ TEST_CASE("Server::build_and_start", "[silkworm][node][rpc]") {
 }
 
 TEST_CASE("Server::shutdown", "[silkworm][node][rpc]") {
-    test::SetLogVerbosityGuard guard{log::Level::kNone};
     ServerSettings settings;
     settings.address_uri = kTestAddressUri;
     EmptyServer server{settings};
@@ -158,7 +152,6 @@ TEST_CASE("Server::shutdown", "[silkworm][node][rpc]") {
 }
 
 TEST_CASE("Server::join", "[silkworm][node][rpc]") {
-    test::SetLogVerbosityGuard guard{log::Level::kNone};
     ServerSettings settings;
     settings.address_uri = kTestAddressUri;
     EmptyServer server{settings};

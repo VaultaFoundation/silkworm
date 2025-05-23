@@ -23,7 +23,7 @@
 #include <ethash/keccak.hpp>
 
 #include <silkworm/core/common/assert.hpp>
-#include <silkworm/core/common/cast.hpp>
+#include <silkworm/core/common/empty_hashes.hpp>
 #include <silkworm/core/common/util.hpp>
 #include <silkworm/core/rlp/encode.hpp>
 
@@ -95,16 +95,16 @@ void HashBuilder::add_leaf(Bytes key, ByteView value) {
     value_ = Bytes{value};
 }
 
-void HashBuilder::add_branch_node(Bytes key, const evmc::bytes32& value, bool is_in_db_trie) {
-    SILKWORM_ASSERT(key > key_ || (key_.empty() && key.empty()));
+void HashBuilder::add_branch_node(Bytes nibbled_key, const evmc::bytes32& hash, bool is_in_db_trie) {
+    SILKWORM_ASSERT(nibbled_key > key_ || (key_.empty() && nibbled_key.empty()));
     if (!key_.empty()) {
-        gen_struct_step(key_, key);
-    } else if (key.empty()) {
+        gen_struct_step(key_, nibbled_key);
+    } else if (nibbled_key.empty()) {
         // known root hash
-        stack_.push_back(wrap_hash(value.bytes));
+        stack_.push_back(wrap_hash(hash.bytes));
     }
-    key_ = std::move(key);
-    value_ = value;
+    key_ = std::move(nibbled_key);
+    value_ = hash;
     is_in_db_trie_ = is_in_db_trie;
 }
 
@@ -132,12 +132,12 @@ evmc::bytes32 HashBuilder::root_hash(bool auto_finalize) {
     if (node_ref.length() == kHashLength + 1) {
         std::memcpy(res.bytes, &node_ref[1], kHashLength);
     } else {
-        res = bit_cast<evmc_bytes32>(keccak256(node_ref));
+        res = std::bit_cast<evmc_bytes32>(keccak256(node_ref));
     }
     return res;
 }
 
-// https://github.com/ledgerwatch/erigon/blob/devel/docs/programmers_guide/guide.md#generating-the-structural-information-from-the-sequence-of-keys
+// https://github.com/erigontech/erigon/blob/main/docs/programmers_guide/guide.md#generating-the-structural-information-from-the-sequence-of-keys
 void HashBuilder::gen_struct_step(ByteView current, const ByteView succeeding) {
     for (bool build_extensions{false};; build_extensions = true) {
         const bool preceding_exists{!groups_.empty()};

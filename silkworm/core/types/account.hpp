@@ -18,8 +18,9 @@
 
 #include <intx/intx.hpp>
 
-#include <silkworm/core/common/base.hpp>
-#include <silkworm/core/common/decoding_result.hpp>
+#include <silkworm/core/common/bytes.hpp>
+#include <silkworm/core/common/empty_hashes.hpp>
+#include <silkworm/core/types/evmc_bytes32.hpp>
 
 namespace silkworm {
 
@@ -33,25 +34,12 @@ struct Account {
     intx::uint256 balance;
     evmc::bytes32 code_hash{kEmptyHash};
     uint64_t incarnation{0};
+    uint64_t previous_incarnation{0};
 
-    //! \remarks Erigon's (*Account)EncodeForStorage
-    [[nodiscard]] Bytes encode_for_storage(bool omit_code_hash = false) const;
+    //! \brief Serialize the account into its Recursive-Length Prefix (RLP) representation
+    Bytes rlp(const evmc::bytes32& storage_root) const;
 
-    //! \remarks Erigon's (*Account)EncodingLengthForStorage
-    [[nodiscard]] size_t encoding_length_for_storage() const;
-
-    //! \brief Rlp encodes Account
-    [[nodiscard]] Bytes rlp(const evmc::bytes32& storage_root) const;
-
-    //! \brief Returns an Account from it's encoded representation
-    [[nodiscard]] static tl::expected<Account, DecodingError> from_encoded_storage(ByteView encoded_payload) noexcept;
-
-    //! \brief Returns an Account Incarnation from it's encoded representation
-    //! \remarks Similar to from_encoded_storage but faster as it parses only incarnation
-    [[nodiscard]] static tl::expected<uint64_t, DecodingError> incarnation_from_encoded_storage(
-        ByteView encoded_payload) noexcept;
-
-    friend bool operator==(const Account&, const Account&);
+    friend bool operator==(const Account&, const Account&) = default;
 };
 
 }  // namespace silkworm

@@ -16,10 +16,12 @@
 
 #pragma once
 
+#include <array>
+
 #include <silkworm/core/trie/node.hpp>
 #include <silkworm/core/trie/prefix_set.hpp>
-#include <silkworm/node/db/mdbx.hpp>
-#include <silkworm/node/etl/collector.hpp>
+#include <silkworm/db/datastore/etl/collector.hpp>
+#include <silkworm/db/datastore/kvdb/mdbx.hpp>
 
 namespace silkworm::trie {
 
@@ -32,14 +34,14 @@ class SubNode : public Node {
     SubNode(const SubNode&) = delete;
     SubNode& operator=(const SubNode&) = delete;
 
-    [[nodiscard]] bool has_tree() const noexcept;   // Whether current child_id has bit set in tree mask
-    [[nodiscard]] bool has_hash() const noexcept;   // Whether current child_id has bit set in hash mask
-    [[nodiscard]] bool has_state() const noexcept;  // Whether current child_id has bit set in state mask
+    bool has_tree() const noexcept;   // Whether current child_id has bit set in tree mask
+    bool has_hash() const noexcept;   // Whether current child_id has bit set in hash mask
+    bool has_state() const noexcept;  // Whether current child_id has bit set in state mask
 
-    void reset();                                   // Resets node to default values
-    void parse(ByteView k, ByteView v);             // Parses node data contents from db (may throw)
-    [[nodiscard]] Bytes full_key() const noexcept;  // Returns full key to child node (i.e. key + child_id)
-    [[nodiscard]] const evmc::bytes32& hash();      // Returns hash of child node (i.e. key + child_id)
+    void reset();                        // Resets node to default values
+    void parse(ByteView k, ByteView v);  // Parses node data contents from db (may throw)
+    Bytes full_key() const noexcept;     // Returns full key to child node (i.e. key + child_id)
+    const evmc::bytes32& hash();         // Returns hash of child node (i.e. key + child_id)
 
     ByteView key{};            // Key retrieved from db (if any) Is nibbled
     ByteView value{};          // Value retrieved from db (if any)
@@ -71,14 +73,17 @@ class SubNode : public Node {
 
 class TrieCursor {
   public:
-    explicit TrieCursor(db::ROCursor& db_cursor, PrefixSet* changed, etl::Collector* collector = nullptr);
+    explicit TrieCursor(
+        datastore::kvdb::ROCursor& db_cursor,
+        PrefixSet* changed,
+        datastore::etl::Collector* collector = nullptr);
 
     // Not copyable nor movable
     TrieCursor(const TrieCursor&) = delete;
     TrieCursor& operator=(const TrieCursor&) = delete;
 
     //! \brief Represent the data returned after a move operation (to_prefix or to_next)
-    struct move_operation_result {
+    struct [[nodiscard]] MoveOperationResult {
         std::optional<Bytes> key{};              // Nibbled key of node
         std::optional<evmc::bytes32> hash{};     // Hash of node
         bool children_in_trie{false};            // Whether there are children in trie
@@ -86,10 +91,10 @@ class TrieCursor {
     };
 
     //! \brief Acquires the prefix and position the cursor to the first occurrence
-    [[nodiscard]] move_operation_result to_prefix(ByteView prefix);
+    MoveOperationResult to_prefix(ByteView prefix);
 
     //! \brief Moves the cursor to next relevant position
-    [[nodiscard]] move_operation_result to_next();
+    MoveOperationResult to_next();
 
   private:
     uint32_t level_{0};                      // Depth level in sub_nodes_
@@ -102,10 +107,10 @@ class TrieCursor {
     Bytes prefix_{};  // Db key prefix for this trie (0 bytes TrieAccount - 40 bytes TrieStorage)
     Bytes buffer_{};  // A convenience buffer
 
-    db::ROCursor& db_cursor_;    // The underlying db cursor (TrieAccount/TrieStorage)
-    PrefixSet* changed_list_;    // The collection of changed nibbled keys
-    ByteView next_created_{};    // The next created account/location in changed list
-    etl::Collector* collector_;  // Pointer to a collector for deletion of obsolete keys
+    datastore::kvdb::ROCursor& db_cursor_;  // The underlying db cursor (TrieAccount/TrieStorage)
+    PrefixSet* changed_list_;               // The collection of changed nibbled keys
+    ByteView next_created_{};               // The next created account/location in changed list
+    datastore::etl::Collector* collector_;  // Pointer to a collector for deletion of obsolete keys
 
     bool db_seek(ByteView seek_key);  // Seeks lowerbound of provided key using db_cursor_
     void db_delete(SubNode& node);    // Collects deletion of node being rebuilt or no longer needed
