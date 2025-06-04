@@ -31,8 +31,12 @@ ExecutionProcessor::ExecutionProcessor(const Block& block, protocol::IRuleSet& r
     : state_{state}, rule_set_{rule_set}, evm_{block, state_, config}, gas_prices_{gas_prices} {
     evm_.beneficiary = rule_set.get_beneficiary(block.header);
 }
-
 ExecutionResult ExecutionProcessor::execute_transaction(const Transaction& txn, Receipt& receipt, const evmone::gas_parameters& gas_params) noexcept {
+    CallResult rc;
+    return execute_transaction(txn, receipt, gas_params, rc);
+}
+
+ExecutionResult ExecutionProcessor::execute_transaction(const Transaction& txn, Receipt& receipt, const evmone::gas_parameters& gas_params, CallResult &rc) noexcept {
     assert(protocol::validate_transaction(txn, state_, available_gas()) == ValidationResult::kOk);
 
     ExecutionResult res;
@@ -121,6 +125,7 @@ ExecutionResult ExecutionProcessor::execute_transaction(const Transaction& txn, 
     receipt.cumulative_gas_used = cumulative_gas_used_;
     receipt.bloom = logs_bloom(state_.logs());
     std::swap(receipt.logs, state_.logs());
+    rc = std::move(vm_res);
     return res;
 }
 

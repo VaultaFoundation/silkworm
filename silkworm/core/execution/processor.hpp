@@ -41,6 +41,7 @@ class ExecutionProcessor {
      * Precondition: transaction must be valid.
      */
     ExecutionResult execute_transaction(const Transaction& txn, Receipt& receipt, const evmone::gas_parameters& gas_params) noexcept;
+    ExecutionResult execute_transaction(const Transaction& txn, Receipt& receipt, const evmone::gas_parameters& gas_params, CallResult &rc) noexcept;
 
     //! \brief Execute the block and write the result to the DB.
     //! \remarks Warning: This method does not verify state root; pre-Byzantium receipt root isn't validated either.
