@@ -32,7 +32,7 @@ namespace silkworm::protocol {
 /**
  * Reference implementation of Ethereum blockchain logic.
  * Used for running Ethereum EL tests; the real node will use staged sync instead
- * (https://github.com/ledgerwatch/erigon/blob/devel/eth/stagedsync/README.md)
+ * (https://github.com/erigontech/erigon/blob/main/eth/stagedsync/README.md)
  */
 class Blockchain {
   public:
@@ -41,15 +41,13 @@ class Blockchain {
      * In the beginning the state must have the genesis allocation.
      * Later on the state may only be modified by the created instance of Blockchain.
      */
-    explicit Blockchain(State& state, const ChainConfig& config, const Block& genesis_block, const evmone::gas_parameters& gas_params, const gas_prices_t& gas_prices);
+    explicit Blockchain(State& state, const ChainConfig& config, const Block& genesis_block, const evmone::gas_parameters& gas_params, const evmone::eosevm::gas_prices& gas_prices);
 
     // Not copyable nor movable
     Blockchain(const Blockchain&) = delete;
     Blockchain& operator=(const Blockchain&) = delete;
 
     ValidationResult insert_block(Block& block, bool check_state_root);
-
-    ObjectPool<evmone::ExecutionState>* state_pool{nullptr};
 
     evmc_vm* exo_evm{nullptr};
 
@@ -62,18 +60,20 @@ class Blockchain {
 
     void unwind_last_changes(uint64_t ancestor, uint64_t tip);
 
-    [[nodiscard]] std::vector<BlockWithHash> intermediate_chain(uint64_t block_number, evmc::bytes32 hash,
-                                                                uint64_t canonical_ancestor) const;
+    std::vector<BlockWithHash> intermediate_chain(
+        uint64_t block_num,
+        evmc::bytes32 hash,
+        uint64_t canonical_ancestor) const;
 
-    [[nodiscard]] uint64_t canonical_ancestor(const BlockHeader& header, const evmc::bytes32& hash) const;
+    uint64_t canonical_ancestor(const BlockHeader& header, const evmc::bytes32& hash) const;
 
     State& state_;
     const ChainConfig& config_;
     RuleSetPtr rule_set_;
     std::unordered_map<evmc::bytes32, ValidationResult> bad_blocks_;
     std::vector<Receipt> receipts_;
-    evmone::gas_parameters gas_params_;
-    gas_prices_t gas_prices_;
+    const evmone::gas_parameters& gas_params_;
+    const evmone::eosevm::gas_prices& gas_prices_;
 };
 
 }  // namespace silkworm::protocol

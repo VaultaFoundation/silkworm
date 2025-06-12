@@ -16,14 +16,18 @@
 
 #pragma once
 
-#include <silkworm/node/stagedsync/stages/stage.hpp>
+#include <silkworm/db/datastore/etl/collector_settings.hpp>
+#include <silkworm/db/stage.hpp>
 
 namespace silkworm::stagedsync {
 
 class BlockHashes final : public Stage {
   public:
-    explicit BlockHashes(NodeSettings* node_settings, SyncContext* sync_context)
-        : Stage(sync_context, db::stages::kBlockHashesKey, node_settings){};
+    explicit BlockHashes(SyncContext* sync_context, datastore::etl::CollectorSettings etl_settings)
+        : Stage(sync_context, silkworm::db::stages::kBlockHashesKey),
+          etl_settings_(std::move(etl_settings)) {}
+    BlockHashes(const BlockHashes&) = delete;  // not copyable
+    BlockHashes(BlockHashes&&) = delete;       // nor movable
     ~BlockHashes() override = default;
 
     Stage::Result forward(db::RWTxn& txn) final;
@@ -32,7 +36,8 @@ class BlockHashes final : public Stage {
     std::vector<std::string> get_log_progress() final;
 
   private:
-    std::unique_ptr<etl::Collector> collector_{nullptr};
+    datastore::etl::CollectorSettings etl_settings_;
+    std::unique_ptr<datastore::kvdb::Collector> collector_;
 
     /* Stats */
     std::atomic_uint32_t current_phase_{0};

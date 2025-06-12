@@ -16,16 +16,22 @@
 
 #pragma once
 
-#include <silkworm/node/stagedsync/stages/stage.hpp>
+#include <silkworm/db/datastore/etl/collector_settings.hpp>
+#include <silkworm/db/stage.hpp>
 
 namespace silkworm::stagedsync {
 
 class HashState final : public Stage {
   public:
-    explicit HashState(NodeSettings* node_settings, SyncContext* sync_context)
-        : Stage(sync_context, db::stages::kHashStateKey, node_settings),
-          collector_(std::make_unique<etl::Collector>(node_settings)){};
+    HashState(
+        SyncContext* sync_context,
+        datastore::etl::CollectorSettings etl_settings)
+        : Stage(sync_context, db::stages::kHashStateKey),
+          etl_settings_(std::move(etl_settings)) {}
+    HashState(const HashState&) = delete;  // not copyable
+    HashState(HashState&&) = delete;       // nor movable
     ~HashState() override = default;
+
     Stage::Result forward(db::RWTxn& txn) final;
     Stage::Result unwind(db::RWTxn& txn) final;
     Stage::Result prune(db::RWTxn& txn) final;
@@ -61,23 +67,33 @@ class HashState final : public Stage {
     Stage::Result unwind_from_storage_changeset(db::RWTxn& txn, BlockNum previous_progress, BlockNum to);
 
     //! \brief Writes to db the changes collected from account changeset scan either in forward or unwind mode
-    Stage::Result write_changes_from_changed_addresses(db::RWTxn& txn, const ChangedAddresses& changed_addresses);
+    void write_changes_from_changed_addresses(db::RWTxn& txn, const ChangedAddresses& changed_addresses);
 
     //! \brief Writes to db the changes collected from storage changeset scan either in forward or unwind mode
-    Stage::Result write_changes_from_changed_storage(db::RWTxn& txn, db::StorageChanges& storage_changes,
-                                                     const absl::btree_map<evmc::address, evmc::bytes32>& hashed_addresses);
+    void write_changes_from_changed_storage(db::RWTxn& txn, silkworm::db::StorageChanges& storage_changes,
+                                            const absl::btree_map<evmc::address, evmc::bytes32>& hashed_addresses);
 
     //! \brief Resets all fields related to log progress tracking
     void reset_log_progress();
 
-    // Logger info
-    std::mutex log_mtx_{};                       // Guards async logging
-    std::atomic_bool incremental_{false};        // Whether operation is incremental
-    std::atomic_bool loading_{false};            // Whether we're in ETL loading phase
-    std::string current_source_;                 // Current source of data
-    std::string current_target_;                 // Current target of transformed data
-    std::string current_key_;                    // Actual processing key
-    std::unique_ptr<etl::Collector> collector_;  // Collector (used only in !incremental_)
+    // Guards async logging
+    std::mutex log_mtx_{};
+
+    // Whether operation is incremental
+    std::atomic_bool incremental_{false};
+    // Whether we're in ETL loading phase
+    std::atomic_bool loading_{false};
+
+    // Current source of data
+    std::string current_source_;
+    // Current target of transformed data
+    std::string current_target_;
+    // Actual processing key
+    std::string current_key_;
+
+    // Collector (used only in !incremental_)
+    datastore::etl::CollectorSettings etl_settings_;
+    std::unique_ptr<datastore::kvdb::Collector> collector_;
 };
 
 }  // namespace silkworm::stagedsync

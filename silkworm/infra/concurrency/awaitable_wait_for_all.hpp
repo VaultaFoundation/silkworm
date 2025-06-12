@@ -27,7 +27,6 @@
 
 #include <boost/asio/any_io_executor.hpp>
 #include <boost/asio/awaitable.hpp>
-#include <boost/asio/co_spawn.hpp>
 #include <boost/asio/deferred.hpp>
 #include <boost/asio/experimental/awaitable_operators.hpp>
 #include <boost/asio/experimental/parallel_group.hpp>
@@ -35,6 +34,7 @@
 #include <boost/asio/use_awaitable.hpp>
 
 #include "parallel_group_utils.hpp"
+#include "spawn.hpp"
 
 namespace silkworm::concurrency::awaitable_wait_for_all {
 

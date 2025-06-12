@@ -17,9 +17,10 @@
 #include "chain_fork_view.hpp"
 
 #include <silkworm/core/chain/genesis.hpp>
+#include <silkworm/core/common/empty_hashes.hpp>
 #include <silkworm/core/types/block.hpp>
+#include <silkworm/core/types/evmc_bytes32.hpp>
 #include <silkworm/infra/common/log.hpp>
-#include <silkworm/node/db/stages.hpp>
 
 namespace silkworm::chainsync {
 
@@ -43,7 +44,7 @@ ChainHead ChainForkView::head_at_genesis(const silkworm::ChainConfig& chain_conf
 
 bool ChainForkView::head_changed() const { return current_head_.total_difficulty != initial_head_.total_difficulty; }
 
-BlockNum ChainForkView::head_height() const { return current_head_.height; }
+BlockNum ChainForkView::head_block_num() const { return current_head_.block_num; }
 
 Hash ChainForkView::head_hash() const { return current_head_.hash; }
 
@@ -57,16 +58,16 @@ TotalDifficulty ChainForkView::add(const BlockHeader& header) {
     if (!parent_td) {                                                              /* clang-format off */
         std::string error_message = "Consensus: parent's total difficulty not found,"
             " hash= " + to_hex(header.parent_hash) +
-            " height= " + std::to_string(header.number - 1) +
+            " block_num= " + std::to_string(header.number - 1) +
             " for header= " + to_hex(header.hash());
-        log::Error("Consensus") << error_message;
+        SILK_ERROR_M("chainsync::ChainForkView") << error_message;
         throw std::logic_error(error_message);  // unexpected condition, bug?  /* clang-format on */
     }
     return add(header, *parent_td);
 }
 
 TotalDifficulty ChainForkView::add(const BlockHeader& header, TotalDifficulty parent_td) {
-    auto height = header.number;
+    auto block_num = header.number;
     Hash hash = header.hash();
 
     auto td = parent_td + header.difficulty;  // calculated total difficulty of this header
@@ -74,18 +75,17 @@ TotalDifficulty ChainForkView::add(const BlockHeader& header, TotalDifficulty pa
     // Now we can decide whether this header will create a change in the canonical head
     if (td > current_head_.total_difficulty) {
         // Save progress
-        current_head_.height = height;
+        current_head_.block_num = block_num;
         current_head_.hash = hash;
         current_head_.total_difficulty = td;  // this makes sure we end up choosing the chain with the max total difficulty
     }
 
-    previous_hash_ = hash;
     td_cache_.put(hash, td);
 
     return td;
 }
 
-std::optional<TotalDifficulty> ChainForkView::get_total_difficulty([[maybe_unused]] BlockNum height, const Hash& hash) {
+std::optional<TotalDifficulty> ChainForkView::get_total_difficulty([[maybe_unused]] BlockNum block_num, const Hash& hash) {
     return get_total_difficulty(hash);
 }
 

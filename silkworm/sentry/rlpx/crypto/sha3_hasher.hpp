@@ -19,6 +19,7 @@
 #include <memory>
 
 #include <silkworm/core/common/base.hpp>
+#include <silkworm/core/common/bytes.hpp>
 
 class Keccak;
 
@@ -30,7 +31,7 @@ class Sha3Hasher final {
     ~Sha3Hasher();
 
     void update(ByteView data);
-    [[nodiscard]] Bytes hash();
+    Bytes hash();
 
   private:
     std::unique_ptr<Keccak> impl_;

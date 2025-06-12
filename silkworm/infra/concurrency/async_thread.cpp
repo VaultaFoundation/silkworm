@@ -21,6 +21,7 @@
 #include <boost/asio/this_coro.hpp>
 #include <boost/system/errc.hpp>
 #include <boost/system/system_error.hpp>
+#include <boost/thread.hpp>
 
 #include <silkworm/infra/common/log.hpp>
 
@@ -28,25 +29,37 @@
 
 namespace silkworm::concurrency {
 
-boost::asio::awaitable<void> async_thread(std::function<void()> run, std::function<void()> stop) {
+Task<void> async_thread(
+    std::function<void()> run,
+    std::function<void()> stop,
+    const char* name,
+    std::optional<size_t> stack_size) {
     std::exception_ptr run_exception;
 
     auto executor = co_await boost::asio::this_coro::executor;
     EventNotifier thread_finished_notifier{executor};
 
-    std::thread thread{[run = std::move(run), &run_exception, &thread_finished_notifier] {
-        try {
-            run();
-        } catch (...) {
-            run_exception = std::current_exception();
-        }
+    boost::thread::attributes attributes;
+    if (stack_size) {
+        attributes.set_stack_size(*stack_size);
+    }
 
-        try {
-            thread_finished_notifier.notify();
-        } catch (const std::exception& ex) {
-            log::Error() << "async_thread thread_finished_notifier.notify exception: " << ex.what();
-        }
-    }};
+    boost::thread thread{attributes, [run = std::move(run), name = name, &run_exception, &thread_finished_notifier] {
+                             log::set_thread_name(name);
+                             try {
+                                 SILK_TRACE << "Async thread [" << name << "] run started";
+                                 run();
+                                 SILK_TRACE << "Async thread [" << name << "] run completed";
+                             } catch (...) {
+                                 run_exception = std::current_exception();
+                             }
+
+                             try {
+                                 thread_finished_notifier.notify();
+                             } catch (const std::exception& ex) {
+                                 SILK_ERROR << "async_thread thread_finished_notifier.notify exception: " << ex.what();
+                             }
+                         }};
 
     try {
         co_await thread_finished_notifier.wait();
@@ -56,16 +69,16 @@ boost::asio::awaitable<void> async_thread(std::function<void()> run, std::functi
             try {
                 stop();
             } catch (const std::exception& stop_ex) {
-                log::Error() << "async_thread stop exception: " << stop_ex.what();
+                SILK_ERROR << "async_thread stop exception: " << stop_ex.what();
                 throw;
             }
             thread.join();
         } else {
-            log::Error() << "async_thread thread_finished_notifier.wait system_error: " << ex.what();
+            SILK_ERROR << "async_thread thread_finished_notifier.wait system_error: " << ex.what();
             throw;
         }
     } catch (...) {
-        log::Critical() << "async_thread thread_finished_notifier.wait unexpected exception";
+        SILK_CRIT << "async_thread thread_finished_notifier.wait unexpected exception";
         throw;
     }
 

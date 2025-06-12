@@ -20,126 +20,134 @@
 #include <map>
 #include <optional>
 #include <string_view>
-#include <tuple>
+#include <utility>
+#include <variant>
+#include <vector>
 
 #include <evmc/evmc.h>
 #include <intx/intx.hpp>
-
-#if not defined(ANTELOPE)
 #include <nlohmann/json.hpp>
-#endif
 
+#include <silkworm/core/common/base.hpp>
+#include <silkworm/core/common/small_map.hpp>
 #include <silkworm/core/common/util.hpp>
-#include <silkworm/core/common/assert.hpp>
-#include <silkworm/core/types/block.hpp>
-namespace silkworm {
+#include <silkworm/core/protocol/bor/config.hpp>
+#include <silkworm/core/protocol/ethash_config.hpp>
+#include <silkworm/core/protocol/trust_config.hpp>
 
+namespace silkworm {
+    struct BlockHeader;
+}
+namespace silkworm {
 namespace protocol {
 
-    //! \see IRuleSet
-    enum class RuleSetType {
-        kNoProof,
-        kEthash,
-        kClique,
-        kAuRa,
-        kTrust,
+    // Already merged at genesis
+    struct NoPreMergeConfig {
+        bool operator==(const NoPreMergeConfig&) const = default;
     };
 
+    //! \see IRuleSet
+    using PreMergeRuleSetConfig = std::variant<NoPreMergeConfig, EthashConfig, bor::Config, TrustConfig>;
+
 }  // namespace protocol
+
+using ChainId = uint64_t;
 
 struct ChainConfig {
     //! \brief Returns the chain identifier
     //! \see https://eips.ethereum.org/EIPS/eip-155
-    uint64_t chain_id{0};
+    ChainId chain_id{0};
 
     //! \brief Holds the hash of genesis block
     std::optional<evmc::bytes32> genesis_hash;
 
-    //! \brief Returns the type of the (pre-Merge) protocol rule set
-    protocol::RuleSetType protocol_rule_set{protocol::RuleSetType::kNoProof};
-
     const std::optional<BlockNum>& homestead_block() const{
-        SILKWORM_ASSERT(protocol_rule_set != protocol::RuleSetType::kTrust);
+        SILKWORM_ASSERT(!is_trust());
         return _homestead_block;
     }
 
     const std::optional<BlockNum>& dao_block() const{
-        SILKWORM_ASSERT(protocol_rule_set != protocol::RuleSetType::kTrust);
+        SILKWORM_ASSERT(!is_trust());
         return _dao_block;
     }
 
     const std::optional<BlockNum>& tangerine_whistle_block() const{
-        SILKWORM_ASSERT(protocol_rule_set != protocol::RuleSetType::kTrust);
+        SILKWORM_ASSERT(!is_trust());
         return _tangerine_whistle_block;
     }
 
     const std::optional<BlockNum>& spurious_dragon_block() const{
-        SILKWORM_ASSERT(protocol_rule_set != protocol::RuleSetType::kTrust);
+        SILKWORM_ASSERT(!is_trust());
         return _spurious_dragon_block;
     }
 
     const std::optional<BlockNum>& byzantium_block() const{
-        SILKWORM_ASSERT(protocol_rule_set != protocol::RuleSetType::kTrust);
+        SILKWORM_ASSERT(!is_trust());
         return _byzantium_block;
     }
 
     const std::optional<BlockNum>& constantinople_block() const{
-        SILKWORM_ASSERT(protocol_rule_set != protocol::RuleSetType::kTrust);
+        SILKWORM_ASSERT(!is_trust());
         return _constantinople_block;
     }
 
     const std::optional<BlockNum>& petersburg_block() const{
-        SILKWORM_ASSERT(protocol_rule_set != protocol::RuleSetType::kTrust);
+        SILKWORM_ASSERT(!is_trust());
         return _petersburg_block;
     }
 
     const std::optional<BlockNum>& istanbul_block() const{
-        SILKWORM_ASSERT(protocol_rule_set != protocol::RuleSetType::kTrust);
+        SILKWORM_ASSERT(!is_trust());
         return _istanbul_block;
     }
 
     const std::optional<BlockNum>& muir_glacier_block() const{
-        SILKWORM_ASSERT(protocol_rule_set != protocol::RuleSetType::kTrust);
+        SILKWORM_ASSERT(!is_trust());
         return _muir_glacier_block;
     }
 
     const std::optional<BlockNum>& berlin_block() const{
-        SILKWORM_ASSERT(protocol_rule_set != protocol::RuleSetType::kTrust);
+        SILKWORM_ASSERT(!is_trust());
         return _berlin_block;
     }
 
     const std::optional<BlockNum>& london_block() const{
-        SILKWORM_ASSERT(protocol_rule_set != protocol::RuleSetType::kTrust);
+        SILKWORM_ASSERT(!is_trust());
         return _london_block;
     }
 
     const std::optional<BlockNum>& arrow_glacier_block() const{
-        SILKWORM_ASSERT(protocol_rule_set != protocol::RuleSetType::kTrust);
+        SILKWORM_ASSERT(!is_trust());
         return _arrow_glacier_block;
     }
 
     const std::optional<BlockNum>& gray_glacier_block() const{
-        SILKWORM_ASSERT(protocol_rule_set != protocol::RuleSetType::kTrust);
+        SILKWORM_ASSERT(!is_trust());
         return _gray_glacier_block;
     }
 
     const std::optional<intx::uint256>& terminal_total_difficulty() const{
-        SILKWORM_ASSERT(protocol_rule_set != protocol::RuleSetType::kTrust);
+        SILKWORM_ASSERT(!is_trust());
         return _terminal_total_difficulty;
     }
 
     const std::optional<BlockTime>& shanghai_time() const{
-        SILKWORM_ASSERT(protocol_rule_set != protocol::RuleSetType::kTrust);
+        SILKWORM_ASSERT(!is_trust());
         return _shanghai_time;
     }
 
     const std::optional<BlockTime>& cancun_time() const{
-        SILKWORM_ASSERT(protocol_rule_set != protocol::RuleSetType::kTrust);
+        SILKWORM_ASSERT(!is_trust());
         return _cancun_time;
     }
 
+    const std::optional<BlockTime>& prague_time() const{
+        SILKWORM_ASSERT(!is_trust());
+        return _prague_time;
+    }
+
     const std::optional<BlockTime>& merge_netsplit_block() const{
-        SILKWORM_ASSERT(protocol_rule_set != protocol::RuleSetType::kTrust);
+        SILKWORM_ASSERT(!is_trust());
         return _merge_netsplit_block;
     }
 
@@ -155,6 +163,10 @@ struct ChainConfig {
     std::optional<BlockNum> _muir_glacier_block{std::nullopt};
     std::optional<BlockNum> _berlin_block{std::nullopt};
     std::optional<BlockNum> _london_block{std::nullopt};
+
+    // (Optional) contract where EIP-1559 fees will be sent to that otherwise would be burnt since the London fork
+    SmallMap<BlockNum, evmc::address> burnt_contract{};
+
     std::optional<BlockNum> _arrow_glacier_block{std::nullopt};
     std::optional<BlockNum> _gray_glacier_block{std::nullopt};
 
@@ -166,26 +178,37 @@ struct ChainConfig {
     // Starting from Shanghai, forks are triggered by block time rather than number
     std::optional<BlockTime> _shanghai_time{std::nullopt};
     std::optional<BlockTime> _cancun_time{std::nullopt};
+    std::optional<BlockTime> _prague_time{std::nullopt};
 
     // EOSEVM version
     std::optional<uint64_t> _version{std::nullopt};
+    bool is_trust()const {
+        return std::holds_alternative<protocol::TrustConfig>(rule_set_config);
+    }
+
+    //! \brief Returns the config of the (pre-Merge) protocol rule set
+    protocol::PreMergeRuleSetConfig rule_set_config{protocol::NoPreMergeConfig{}};
+
+    // The Shanghai hard fork has withdrawals, but Agra does not
+    bool withdrawals_activated(BlockTime block_time) const noexcept;
+    bool is_london(BlockNum block_num) const noexcept;
 
     //! \brief Returns the revision level at given block number
     //! \details In other words, on behalf of Json chain config data
     //! returns whether specific HF have occurred
-    [[nodiscard]] evmc_revision determine_revision_by_block(uint64_t block_number, uint64_t block_time) const noexcept;
+    evmc_revision determine_revision_by_block(BlockNum block_num, uint64_t block_time) const noexcept;
+    evmc_revision revision(const BlockHeader& header) const noexcept;
+    uint64_t eos_evm_version(const BlockHeader& header) const noexcept;
 
-    [[nodiscard]] evmc_revision revision(const BlockHeader& header) const noexcept;
-    [[nodiscard]] uint64_t eos_evm_version(const BlockHeader& header) const noexcept;
+    std::vector<BlockNum> distinct_fork_block_nums() const;
+    std::vector<BlockTime> distinct_fork_times() const;
+    std::vector<uint64_t> distinct_fork_points() const;
 
-    [[nodiscard]] std::vector<BlockNum> distinct_fork_numbers() const;
-    [[nodiscard]] std::vector<BlockTime> distinct_fork_times() const;
-    [[nodiscard]] std::vector<uint64_t> distinct_fork_points() const;
+    //! \brief Check invariant on pre-Merge config validity
+    bool valid_pre_merge_config() const noexcept;
 
     //! \brief Return the JSON representation of this object
-    #if not defined(ANTELOPE)
-    [[nodiscard]] nlohmann::json to_json() const noexcept;
-    #endif
+    nlohmann::json to_json() const noexcept;
 
     /*Sample JSON input:
     {
@@ -204,11 +227,9 @@ struct ChainConfig {
     */
     //! \brief Try parse a JSON object into strongly typed ChainConfig
     //! \remark Should this return std::nullopt the parsing has failed
-    #if not defined(ANTELOPE)
     static std::optional<ChainConfig> from_json(const nlohmann::json& json) noexcept;
-    #endif
 
-    friend bool operator==(const ChainConfig&, const ChainConfig&);
+    friend bool operator==(const ChainConfig&, const ChainConfig&) = default;
 };
 
 std::ostream& operator<<(std::ostream& out, const ChainConfig& obj);
@@ -216,7 +237,6 @@ std::ostream& operator<<(std::ostream& out, const ChainConfig& obj);
 inline constexpr ChainConfig get_kEOSEVMConfigTemplate(uint64_t _chain_id) {
     return ChainConfig{
         .chain_id = _chain_id,
-        .protocol_rule_set = protocol::RuleSetType::kTrust,
         ._homestead_block = 0,
         ._dao_block = 0,
         ._tangerine_whistle_block = 0,
@@ -225,91 +245,48 @@ inline constexpr ChainConfig get_kEOSEVMConfigTemplate(uint64_t _chain_id) {
         ._constantinople_block = 0,
         ._petersburg_block = 0,
         ._istanbul_block = 0,
+        .rule_set_config = protocol::TrustConfig{},
     };
 }
+
 #if not defined(ANTELOPE)
 inline constexpr ChainConfig kEOSEVMMainnetConfig = get_kEOSEVMConfigTemplate(17777);
 #endif
 
-inline constexpr evmc::bytes32 kMainnetGenesisHash{0xd4e56740f876aef8c010b86a40d5f56745a118d0906a34e69aec8c0db1cb8fa3_bytes32};
-inline constexpr ChainConfig get_kMainnetConfig() {
-    return ChainConfig{
-        .chain_id = 1,
-        .protocol_rule_set = protocol::RuleSetType::kEthash,
-        ._homestead_block = 1'150'000,
-        ._dao_block = 1'920'000,
-        ._tangerine_whistle_block = 2'463'000,
-        ._spurious_dragon_block = 2'675'000,
-        ._byzantium_block = 4'370'000,
-        ._constantinople_block = 7'280'000,
-        ._petersburg_block = 7'280'000,
-        ._istanbul_block = 9'069'000,
-        ._muir_glacier_block = 9'200'000,
-        ._berlin_block = 12'244'000,
-        ._london_block = 12'965'000,
-        ._arrow_glacier_block = 13'773'000,
-        ._gray_glacier_block = 15'050'000,
-        ._terminal_total_difficulty = intx::from_string<intx::uint256>("58750000000000000000000"),
-        ._shanghai_time = 1681338455,
-    };
-}
-#if not defined(ANTELOPE)
-inline constexpr ChainConfig kMainnetConfig = get_kMainnetConfig();
-#endif
 
-inline constexpr evmc::bytes32 kGoerliGenesisHash{0xbf7e331f7f7c1dd2e05159666b3bf8bc7a8a3a9eb1d518969eab529dd9b88c1a_bytes32};
-inline constexpr ChainConfig get_kGoerliConfig() {
-    return ChainConfig {
-        .chain_id = 5,
-        .protocol_rule_set = protocol::RuleSetType::kClique,
-        ._homestead_block = 0,
-        ._tangerine_whistle_block = 0,
-        ._spurious_dragon_block = 0,
-        ._byzantium_block = 0,
-        ._constantinople_block = 0,
-        ._petersburg_block = 0,
-        ._istanbul_block = 1'561'651,
-        ._berlin_block = 4'460'644,
-        ._london_block = 5'062'605,
-        ._terminal_total_difficulty = 10790000,
-        ._shanghai_time = 1678832736
-    };
-}
-#if not defined(ANTELOPE)
-inline constexpr ChainConfig kGoerliConfig = get_kGoerliConfig();
-#endif
+using namespace evmc::literals;
+
+inline constexpr evmc::bytes32 kMainnetGenesisHash{0xd4e56740f876aef8c010b86a40d5f56745a118d0906a34e69aec8c0db1cb8fa3_bytes32};
+constinit extern const ChainConfig kMainnetConfig;
+
+inline constexpr evmc::bytes32 kHoleskyGenesisHash{0xb5f7f912443c940f21fd611f12828d75b534364ed9e95ca4e307729a4661bde4_bytes32};
+constinit extern const ChainConfig kHoleskyConfig;
 
 inline constexpr evmc::bytes32 kSepoliaGenesisHash{0x25a5cc106eea7138acab33231d7160d69cb777ee0c2c553fcddf5138993e6dd9_bytes32};
-inline constexpr ChainConfig get_kSepoliaConfig() {
-    return ChainConfig{
-        .chain_id = 11155111,
-        .protocol_rule_set = protocol::RuleSetType::kEthash,
-        ._homestead_block = 0,
-        ._tangerine_whistle_block = 0,
-        ._spurious_dragon_block = 0,
-        ._byzantium_block = 0,
-        ._constantinople_block = 0,
-        ._petersburg_block = 0,
-        ._istanbul_block = 0,
-        ._muir_glacier_block = 0,
-        ._berlin_block = 0,
-        ._london_block = 0,
-        ._terminal_total_difficulty = 17000000000000000,
-        ._merge_netsplit_block = 1'735'371,
-        ._shanghai_time = 1677557088
-    };
-}
-#if not defined(ANTELOPE)
-inline constexpr ChainConfig kSepoliaConfig = get_kSepoliaConfig();
-#endif
+constinit extern const ChainConfig kSepoliaConfig;
 
-//! \brief Looks up a known chain config provided its chain ID
-std::optional<std::pair<const std::string, const ChainConfig*>> lookup_known_chain(uint64_t chain_id) noexcept;
+inline constexpr evmc::bytes32 kBorMainnetGenesisHash{0xa9c28ce2141b56c474f1dc504bee9b01eb1bd7d1a507580d5519d4437a97de1b_bytes32};
+constinit extern const ChainConfig kBorMainnetConfig;
 
-//! \brief Looks up a known chain config provided its chain identifier (eg. "mainnet")
-std::optional<std::pair<const std::string, const ChainConfig*>> lookup_known_chain(std::string_view identifier) noexcept;
+inline constexpr evmc::bytes32 kAmoyGenesisHash{0x7202b2b53c5a0836e773e319d18922cc756dd67432f9a1f65352b61f4406c697_bytes32};
+constinit extern const ChainConfig kAmoyConfig;
 
-//! \brief Returns a map known chains names mapped to their respective chain ids
-std::map<std::string, uint64_t> get_known_chains_map() noexcept;
+//! \brief Known chain names mapped to their respective chain IDs
+inline constexpr SmallMap<std::string_view, ChainId> kKnownChainNameToId{
+    {"amoy"sv, 80002},
+    {"bor-mainnet"sv, 137},
+    {"holesky"sv, 17000},
+    {"mainnet"sv, 1},
+    {"sepolia"sv, 11155111},
+};
+
+//! \brief Known chain IDs mapped to their respective chain configs
+inline constexpr SmallMap<ChainId, const ChainConfig*> kKnownChainConfigs{
+    {*kKnownChainNameToId.find("mainnet"sv), &kMainnetConfig},
+    {*kKnownChainNameToId.find("amoy"sv), &kAmoyConfig},
+    {*kKnownChainNameToId.find("bor-mainnet"sv), &kBorMainnetConfig},
+    {*kKnownChainNameToId.find("holesky"sv), &kHoleskyConfig},
+    {*kKnownChainNameToId.find("sepolia"sv), &kSepoliaConfig},
+};
 
 }  // namespace silkworm

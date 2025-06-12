@@ -24,9 +24,9 @@
 
 namespace silkworm {
 
-OutboundNewBlockHashes::OutboundNewBlockHashes(bool f) : is_first_sync_{f} {}
+OutboundNewBlockHashes::OutboundNewBlockHashes(bool is_first_sync) : is_first_sync_{is_first_sync} {}
 
-void OutboundNewBlockHashes::execute(db::ROAccess, HeaderChain& hc, BodySequence&, SentryClient& sentry) {
+void OutboundNewBlockHashes::execute(db::DataStoreRef, HeaderChain& hc, BodySequence&, SentryClient& sentry) {
     auto& announces_to_do = hc.announces_to_do();
 
     if (is_first_sync_) {
@@ -40,19 +40,21 @@ void OutboundNewBlockHashes::execute(db::ROAccess, HeaderChain& hc, BodySequence
     }
 
     for (auto& announce : announces_to_do) {
-        // packet_.emplace_back(announce.hash, announce.number); // requires c++20
-        packet_.push_back({announce.hash, announce.number});
+        packet_.emplace_back(NewBlockHash{announce.hash, announce.block_num});
     }
 
     SILK_TRACE << "Sending message OutboundNewBlockHashes (announcements) with send_message_to_all, content:"
                << packet_;
 
-    [[maybe_unused]] auto peers = sentry.send_message_to_all(*this);
+    try {
+        [[maybe_unused]] auto peers = sentry.send_message_to_all(*this);
 
-    SILK_TRACE << "Received sentry result of OutboundNewBlockHashes: "
-               << std::to_string(peers.size()) + " peer(s)";
+        SILK_TRACE << "Received sentry result of OutboundNewBlockHashes: " << std::to_string(peers.size()) + " peer(s)";
 
-    announces_to_do.clear();  // clear announces from the queue
+        announces_to_do.clear();  // clear announces from the queue
+    } catch (const boost::system::system_error& se) {
+        SILK_TRACE << "OutboundNewBlockHashes failed send_message_to_all error: " << se.what();
+    }
 }
 
 Bytes OutboundNewBlockHashes::message_data() const {

@@ -19,8 +19,8 @@
 #include <silkworm/infra/common/log.hpp>
 #include <silkworm/infra/concurrency/awaitable_wait_for_one.hpp>
 #include <silkworm/infra/concurrency/timeout.hpp>
+#include <silkworm/sentry/rlpx/common/disconnect_message.hpp>
 #include <silkworm/sentry/rlpx/framing/framing_cipher.hpp>
-#include <silkworm/sentry/rlpx/rlpx_common/disconnect_message.hpp>
 
 #include "auth_initiator.hpp"
 #include "auth_recipient.hpp"
@@ -30,9 +30,8 @@ namespace silkworm::sentry::rlpx::auth {
 
 using namespace std::chrono_literals;
 using namespace concurrency::awaitable_wait_for_one;
-using common::Message;
 
-Task<AuthKeys> Handshake::auth(common::SocketStream& stream) {
+Task<AuthKeys> Handshake::auth(SocketStream& stream) {
     if (peer_public_key_) {
         auth::AuthInitiator auth_initiator{node_key_, peer_public_key_.value()};
         co_return (co_await auth_initiator.execute(stream));
@@ -42,9 +41,9 @@ Task<AuthKeys> Handshake::auth(common::SocketStream& stream) {
     }
 }
 
-Task<Handshake::HandshakeResult> Handshake::execute(common::SocketStream& stream) {
+Task<Handshake::HandshakeResult> Handshake::execute(SocketStream& stream) {
     auto auth_keys = co_await auth(stream);
-    log::Debug("sentry") << "rlpx::auth::Handshake AuthKeys.peer_ephemeral_public_key: " << auth_keys.peer_ephemeral_public_key.hex();
+    SILK_TRACE_M("sentry") << "rlpx::auth::Handshake AuthKeys.peer_ephemeral_public_key: " << auth_keys.peer_ephemeral_public_key.hex();
 
     framing::FramingCipher framing_cipher{
         framing::FramingCipher::KeyMaterial{
@@ -73,19 +72,22 @@ Task<Handshake::HandshakeResult> Handshake::execute(common::SocketStream& stream
 
     Message reply_message = std::get<Message>(co_await (message_stream.receive() || concurrency::timeout(5s)));
     if (reply_message.id != HelloMessage::kId) {
-        if (reply_message.id == rlpx_common::DisconnectMessage::kId) {
-            throw DisconnectError();
-        } else {
-            throw std::runtime_error("rlpx::auth::Handshake: unexpected RLPx message");
+        if (reply_message.id == DisconnectMessage::kId) {
+            auto disconnect_message = DisconnectMessage::from_message(reply_message);
+            throw DisconnectError(disconnect_message.reason);
         }
+        throw std::runtime_error("rlpx::auth::Handshake: unexpected RLPx message");
     }
 
     HelloMessage hello_reply_message = HelloMessage::from_message(reply_message);
-    log::Debug("sentry") << "rlpx::auth::Handshake success: peer Hello: " << hello_reply_message.client_id()
-                         << " with " << hello_reply_message.capabilities_description();
 
-    if (!hello_reply_message.contains_capability(HelloMessage::Capability{required_capability_}))
-        throw std::runtime_error("rlpx::auth::Handshake: no matching required capability");
+    HelloMessage::Capability required_capability{required_capability_};
+    if (!hello_reply_message.contains_capability(required_capability)) {
+        throw CapabilityMismatchError(required_capability.to_string(), hello_reply_message.capabilities_description());
+    }
+
+    SILK_DEBUG_M("sentry") << "rlpx::auth::Handshake success: peer Hello: " << hello_reply_message.client_id()
+                           << " with " << hello_reply_message.capabilities_description();
 
     message_stream.enable_compression();
 

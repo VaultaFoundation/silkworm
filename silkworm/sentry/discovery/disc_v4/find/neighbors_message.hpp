@@ -19,18 +19,18 @@
 #include <chrono>
 #include <map>
 
-#include <silkworm/core/common/base.hpp>
+#include <silkworm/core/common/bytes.hpp>
 #include <silkworm/sentry/common/ecc_public_key.hpp>
-#include <silkworm/sentry/discovery/disc_v4/disc_v4_common/node_address.hpp>
+#include <silkworm/sentry/discovery/common/node_address.hpp>
 
 namespace silkworm::sentry::discovery::disc_v4::find {
 
 struct NeighborsMessage {
-    std::map<common::EccPublicKey, disc_v4_common::NodeAddress> node_addresses;
+    std::map<EccPublicKey, NodeAddress> node_addresses;
     std::chrono::time_point<std::chrono::system_clock> expiration;
 
-    [[nodiscard]] Bytes rlp_encode() const;
-    [[nodiscard]] static NeighborsMessage rlp_decode(ByteView data);
+    Bytes rlp_encode() const;
+    static NeighborsMessage rlp_decode(ByteView data);
 
     static const uint8_t kId;
 };

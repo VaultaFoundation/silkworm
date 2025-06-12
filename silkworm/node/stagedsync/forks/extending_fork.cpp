@@ -16,6 +16,8 @@
 
 #include "extending_fork.hpp"
 
+#include <boost/asio/executor_work_guard.hpp>
+
 #include "main_chain.hpp"
 
 namespace silkworm::stagedsync {
@@ -28,10 +30,13 @@ static void ensure(bool condition, const std::string& message) {
     }
 }
 
-ExtendingFork::ExtendingFork(BlockId forking_point, MainChain& main_chain, asio::io_context& ctx)
+ExtendingFork::ExtendingFork(
+    BlockId forking_point,
+    MainChain& main_chain,
+    any_io_executor external_executor)
     : forking_point_{forking_point},
       main_chain_{main_chain},
-      io_context_{ctx},
+      external_executor_{std::move(external_executor)},
       current_head_{forking_point} {}
 
 ExtendingFork::~ExtendingFork() {
@@ -43,28 +48,33 @@ BlockId ExtendingFork::current_head() const {
 }
 
 void ExtendingFork::execution_loop() {
-    if (!executor_) return;
-    asio::executor_work_guard<decltype(executor_->get_executor())> work{executor_->get_executor()};
-    executor_->run();
+    if (!ioc_) return;
+    executor_work_guard<decltype(ioc_->get_executor())> work{ioc_->get_executor()};
+    ioc_->run();
     if (fork_) fork_->close();  // close the fork here, in the same thread where was created to comply to mdbx limitations
 }
 
-void ExtendingFork::start_with(BlockId new_head, std::list<std::shared_ptr<Block>>&& blocks) {
+void ExtendingFork::start_with(BlockId new_head, std::list<std::shared_ptr<Block>> blocks) {
     propagate_exception_if_any();
 
-    executor_ = std::make_unique<asio::io_context>();
+    ioc_ = std::make_unique<io_context>();
     thread_ = std::thread{[this]() { execution_loop(); }};
 
     current_head_ = new_head;  // setting this here is important for find_fork_by_head() due to the fact that block
                                // insertion and head computation is delayed but find_fork_by_head() is called immediately
 
-    post(*executor_, [this, new_head, blocks_ = std::move(blocks)]() {  // note: this requires a "stable" this pointer
+    post(*ioc_, [this, new_head, blocks = std::move(blocks)]() {  // note: this requires a "stable" this pointer
         try {
             if (exception_) return;
-            fork_ = std::make_unique<Fork>(forking_point_,
-                                           db::ROTxn(main_chain_.tx().db()),
-                                           main_chain_.node_settings());  // create the real fork
-            fork_->extend_with(blocks_);                                  // extend it with the blocks
+            // create the real fork
+            fork_ = std::make_unique<Fork>(
+                forking_point_,
+                datastore::kvdb::ROTxnManaged(main_chain_.tx().db()),
+                main_chain_.data_model_factory(),
+                main_chain_.log_timer_factory(),
+                main_chain_.stages_factory(),
+                main_chain_.node_settings().data_directory->forks().path());
+            fork_->extend_with(blocks);
             ensure(fork_->current_head() == new_head, "fork head mismatch");
         } catch (...) {
             save_exception(std::current_exception());
@@ -74,37 +84,39 @@ void ExtendingFork::start_with(BlockId new_head, std::list<std::shared_ptr<Block
 
 void ExtendingFork::close() {
     propagate_exception_if_any();
-    if (executor_) executor_->stop();
+    if (ioc_) ioc_->stop();
     if (thread_.joinable()) thread_.join();
 }
 
-void ExtendingFork::extend_with(Hash head_hash, const Block& block) {
+void ExtendingFork::extend_with(Hash head_hash, const Block& head) {
     propagate_exception_if_any();
 
-    current_head_ = {block.header.number, head_hash};  // setting this here is important, same as above
+    current_head_ = {head.header.number, head_hash};  // setting this here is important, same as above
 
-    post(*executor_, [this, block]() {
+    post(*ioc_, [this, head]() {
         try {
             if (exception_) return;
-            fork_->extend_with(block);
+            fork_->extend_with(head);
         } catch (...) {
             save_exception(std::current_exception());
         }
     });
 }
 
-auto ExtendingFork::verify_chain() -> concurrency::AwaitableFuture<VerificationResult> {
+ExtendingFork::VerificationResultFuture ExtendingFork::verify_chain() {
+    using execution::api::VerificationResult;
+
     propagate_exception_if_any();
 
-    concurrency::AwaitablePromise<VerificationResult> promise{io_context_};  // note: promise uses an external io_context
+    concurrency::AwaitablePromise<VerificationResult> promise{external_executor_};  // note: promise uses an external io_context
     auto awaitable_future = promise.get_future();
 
-    post(*executor_, [this, promise_ = std::move(promise)]() mutable {
+    post(*ioc_, [this, promise = std::move(promise)]() mutable {
         try {
             if (exception_) return;
             auto result = fork_->verify_chain();
             current_head_ = fork_->current_head();
-            promise_.set_value(result);
+            promise.set_value(result);
         } catch (...) {
             save_exception(std::current_exception());
         }
@@ -113,19 +125,20 @@ auto ExtendingFork::verify_chain() -> concurrency::AwaitableFuture<VerificationR
     return awaitable_future;
 }
 
-auto ExtendingFork::fork_choice(Hash head_block_hash, std::optional<Hash> finalized_block_hash)
-    -> concurrency::AwaitableFuture<bool> {
+concurrency::AwaitableFuture<bool> ExtendingFork::fork_choice(Hash head_block_hash,
+                                                              std::optional<Hash> finalized_block_hash,
+                                                              std::optional<Hash> safe_block_hash) {
     propagate_exception_if_any();
 
-    concurrency::AwaitablePromise<bool> promise{io_context_};  // note: promise uses an external io_context
+    concurrency::AwaitablePromise<bool> promise{external_executor_};  // note: promise uses an external io_context
     auto awaitable_future = promise.get_future();
 
-    post(*executor_, [this, promise_ = std::move(promise), head_block_hash, finalized_block_hash]() mutable {
+    post(*ioc_, [this, promise = std::move(promise), head_block_hash, finalized_block_hash, safe_block_hash]() mutable {
         try {
             if (exception_) return;
-            auto updated = fork_->fork_choice(head_block_hash, finalized_block_hash);
+            auto updated = fork_->fork_choice(head_block_hash, finalized_block_hash, safe_block_hash);
             current_head_ = fork_->current_head();
-            promise_.set_value(updated);
+            promise.set_value(updated);
         } catch (...) {
             save_exception(std::current_exception());
         }

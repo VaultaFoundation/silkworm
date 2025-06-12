@@ -16,30 +16,21 @@
 
 #include "util.hpp"
 
-#include <catch2/catch.hpp>
+#include <absl/log/absl_log.h>
+#include <catch2/catch_test_macros.hpp>
 
+#include <silkworm/core/test_util/null_stream.hpp>
 #include <silkworm/infra/common/log.hpp>
-#include <silkworm/infra/test/log.hpp>
+#include <silkworm/infra/test_util/log.hpp>
 
 namespace silkworm::rpc {
 
 // Exclude gRPC tests from sanitizer builds due to data race warnings inside gRPC library
 #ifndef SILKWORM_SANITIZE
 
-// Factory function creating one null output stream (all characters are discarded)
-inline std::ostream& null_stream() {
-    static struct null_buf : public std::streambuf {
-        int overflow(int c) override { return c; }
-    } null_buf;
-    static struct null_strm : public std::ostream {
-        null_strm() : std::ostream(&null_buf) {}
-    } null_strm;
-    return null_strm;
-}
-
 TEST_CASE("print grpc::Status", "[silkworm][rpc][util]") {
-    CHECK_NOTHROW(null_stream() << grpc::Status::OK);
-    CHECK_NOTHROW(null_stream() << grpc::Status::CANCELLED);
+    CHECK_NOTHROW(test_util::null_stream() << grpc::Status::OK);
+    CHECK_NOTHROW(test_util::null_stream() << grpc::Status::CANCELLED);
 }
 
 TEST_CASE("compare grpc::Status", "[silkworm][rpc][util]") {
@@ -55,45 +46,46 @@ TEST_CASE("compare grpc::Status", "[silkworm][rpc][util]") {
     CHECK(!(status3 == status4));
 }
 
-// Necessary at namespace level for TEST_CASE GrpcLogGuard
-static bool gpr_test_log_reached{false};
-static void gpr_test_log(gpr_log_func_args* /*args*/) {
-    gpr_test_log_reached = true;
+#ifdef SILKWORM_TEST_SKIP
+TEST_CASE("AbseilLogGuard", "[silkworm][rpc][util]") {
+    struct TestLogSink : public absl::LogSink {
+        bool message_sent{};
+        ~TestLogSink() override = default;
+        void Send(const absl::LogEntry&) override {
+            message_sent = true;
+        }
+    };
+
+    log::Settings settings{
+        .log_nocolor = true,
+        .log_verbosity = log::Level::kInfo,
+    };
+    log::init(settings);
+
+    log::AbseilLogGuard<TestLogSink> log_guard;
+    CHECK_FALSE(log_guard.sink().message_sent);
+    ABSL_LOG(INFO) << "message for TestLogSink";
+    CHECK(log_guard.sink().message_sent);
 }
+#endif  // SILKWORM_TEST_SKIP
 
-TEST_CASE("GrpcLogGuard", "[silkworm][rpc][util]") {
-    REQUIRE(!gpr_test_log_reached);
-    // Creating at least one gRPC object is needed to trigger gRPC library initialization phase,
-    // otherwise gpr_log seems not working (i.e. log function not called at all)
-    grpc::CompletionQueue queue;
-    GrpcLogGuard<gpr_test_log> log_guard;
-    gpr_log(GPR_ERROR, "error message");
-    REQUIRE(gpr_test_log_reached);
+#ifdef SILKWORM_TEST_SKIP
+TEST_CASE("AbseilToSilkwormLogSink", "[silkworm][rpc][util]") {
+    log::Settings settings{
+        .log_nocolor = true,
+        .log_verbosity = log::Level::kTrace,
+    };
+    log::init(settings);
+
+    // ABSL_LOG(FATAL) << "ABSL_LOG(FATAL)";
+    ABSL_LOG(ERROR) << "ABSL_LOG(ERROR) @ Level::kError";
+    ABSL_LOG(WARNING) << "ABSL_LOG(WARN) @ Level::kWarn";
+    ABSL_LOG(INFO) << "ABSL_LOG(INFO) @ Level::kInfo";
+    ABSL_VLOG(2) << "ABSL_VLOG(2) @ Level::kDebug";
+    ABSL_VLOG(4) << "ABSL_VLOG(4) @ Level::kTrace";
 }
+#endif  // SILKWORM_TEST_SKIP
 
-TEST_CASE("gpr_silkworm_log", "[silkworm][rpc][util]") {
-    test::SetLogVerbosityGuard guard{log::Level::kNone};
-    const char* FILE_NAME{"file.cpp"};
-    const int LINE_NUMBER{10};
-    Grpc2SilkwormLogGuard log_guard;
-
-    SECTION("GPR_LOG_SEVERITY_ERROR") {
-        CHECK_NOTHROW(gpr_log(FILE_NAME, LINE_NUMBER, GPR_LOG_SEVERITY_ERROR, "error message"));
-    }
-
-    SECTION("GPR_LOG_SEVERITY_INFO") {
-        gpr_set_log_verbosity(GPR_LOG_SEVERITY_INFO);
-        CHECK_NOTHROW(gpr_log(FILE_NAME, LINE_NUMBER, GPR_LOG_SEVERITY_INFO, "info message"));
-    }
-
-    SECTION("GPR_LOG_SEVERITY_DEBUG") {
-        gpr_set_log_verbosity(GPR_LOG_SEVERITY_DEBUG);
-        CHECK_NOTHROW(gpr_log(FILE_NAME, LINE_NUMBER, GPR_LOG_SEVERITY_DEBUG, "debug message"));
-    }
-
-    // restore the GRPC default log level to not affect logging coming from the other tests
-    gpr_set_log_verbosity(GPR_LOG_SEVERITY_ERROR);
-}
 #endif  // SILKWORM_SANITIZE
 
 }  // namespace silkworm::rpc

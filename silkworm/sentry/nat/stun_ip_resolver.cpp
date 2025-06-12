@@ -18,6 +18,7 @@
 
 #include <chrono>
 #include <optional>
+#include <sstream>
 #include <stdexcept>
 #include <string_view>
 
@@ -26,6 +27,7 @@
 #include <boost/asio/this_coro.hpp>
 
 #include <silkworm/core/common/base.hpp>
+#include <silkworm/core/common/bytes.hpp>
 #include <silkworm/infra/concurrency/awaitable_wait_for_one.hpp>
 #include <silkworm/infra/concurrency/timeout.hpp>
 #include <silkworm/sentry/common/random.hpp>
@@ -43,8 +45,8 @@ namespace silkworm::sentry::nat {
 
 using namespace boost::asio;
 
-constexpr std::string_view kStunDefaultServerHost = "stun.l.google.com";
-constexpr uint16_t kStunDefaultServerPort = 19302;
+static constexpr std::string_view kStunDefaultServerHost = "stun.l.google.com";
+static constexpr uint16_t kStunDefaultServerPort = 19302;
 
 Task<ip::address> stun_ip_resolver() {
     using namespace std::chrono_literals;
@@ -52,12 +54,21 @@ Task<ip::address> stun_ip_resolver() {
 
     auto executor = co_await this_coro::executor;
 
+    ip::udp::endpoint endpoint;
     ip::udp::resolver resolver{executor};
-    auto endpoints = co_await resolver.async_resolve(
-        kStunDefaultServerHost,
-        std::to_string(kStunDefaultServerPort),
-        use_awaitable);
-    const ip::udp::endpoint& endpoint = *endpoints.cbegin();
+    try {
+        auto endpoints = co_await resolver.async_resolve(
+            kStunDefaultServerHost,
+            std::to_string(kStunDefaultServerPort),
+            use_awaitable);
+        endpoint = *endpoints.cbegin();
+    } catch (const boost::system::system_error& ex) {
+        std::ostringstream message;
+        message << "stun_ip_resolver: failed to resolve host '" << kStunDefaultServerHost << "': ";
+        message << ex.what() << ". ";
+        message << "Does your internet connection work?";
+        throw std::runtime_error(message.str());
+    }
 
     ip::udp::socket socket{executor};
     co_await socket.async_connect(endpoint, use_awaitable);
@@ -67,7 +78,7 @@ Task<ip::address> stun_ip_resolver() {
     int retry_count = 3;
     while (retry_count > 0) {
         try {
-            Bytes transaction_id = common::random_bytes(12);
+            Bytes transaction_id = random_bytes(12);
             stun::message binding_request{stun::message::binding_request, transaction_id.data()};
             ByteView request_data(binding_request.data(), binding_request.size());
 
@@ -75,7 +86,7 @@ Task<ip::address> stun_ip_resolver() {
             co_await (socket.async_receive(buffer(response_data), use_awaitable) || concurrency::timeout(1s));
             break;
         } catch (const concurrency::TimeoutExpiredError&) {
-            retry_count--;
+            --retry_count;
         }
     }
 

@@ -16,15 +16,15 @@
 
 #include "message_codec.hpp"
 
-#include <cassert>
 #include <cstddef>
 #include <cstring>
 #include <stdexcept>
 
+#include <silkworm/core/common/assert.hpp>
 #include <silkworm/core/common/util.hpp>
 #include <silkworm/sentry/common/crypto/ecdsa_signature.hpp>
 
-#include "disc_v4_common/packet_type.hpp"
+#include "common/packet_type.hpp"
 
 namespace silkworm::sentry::discovery::disc_v4 {
 
@@ -38,9 +38,9 @@ struct Packet {
 };
 #pragma pack(pop)
 
-using namespace common::crypto;
+using namespace crypto;
 
-Bytes MessageCodec::encode(const common::Message& message, ByteView private_key) {
+Bytes MessageCodec::encode(const Message& message, ByteView private_key) {
     Bytes packet_data(sizeof(Packet) + message.data.size() - 1, 0);
     auto packet = reinterpret_cast<Packet*>(packet_data.data());
 
@@ -48,7 +48,7 @@ Bytes MessageCodec::encode(const common::Message& message, ByteView private_key)
     memcpy(packet->data, message.data.data(), message.data.size());
 
     auto type_and_data_hash = keccak256(ByteView(packet_data).substr(offsetof(Packet, type)));
-    Bytes signature = ecdsa_signature::sign(ByteView(type_and_data_hash.bytes), private_key);
+    Bytes signature = ecdsa_signature::sign_recoverable(ByteView(type_and_data_hash.bytes), private_key);
     memcpy(packet->signature, signature.data(), signature.size());
 
     auto hash = keccak256(ByteView(packet_data).substr(offsetof(Packet, signature)));
@@ -58,7 +58,7 @@ Bytes MessageCodec::encode(const common::Message& message, ByteView private_key)
 }
 
 ByteView MessageCodec::encoded_packet_hash(ByteView packet_data) {
-    assert(packet_data.size() >= sizeof(Packet));
+    SILKWORM_ASSERT(packet_data.size() >= sizeof(Packet));
     return packet_data.substr(0, sizeof(Packet{}.hash));
 }
 
@@ -69,7 +69,7 @@ MessageEnvelope MessageCodec::decode(ByteView packet_data) {
         throw std::runtime_error("MessageCodec: packet is too big");
     auto packet = reinterpret_cast<const Packet*>(packet_data.data());
 
-    if ((packet->type == 0) || (packet->type > static_cast<uint8_t>(disc_v4_common::PacketType::kMaxValue)))
+    if ((packet->type == 0) || (packet->type > static_cast<uint8_t>(PacketType::kMaxValue)))
         throw std::runtime_error("MessageCodec: invalid type");
 
     auto expected_hash = keccak256(packet_data.substr(offsetof(Packet, signature)));
@@ -77,11 +77,11 @@ MessageEnvelope MessageCodec::decode(ByteView packet_data) {
         throw std::runtime_error("MessageCodec: invalid hash");
 
     auto type_and_data_hash = keccak256(packet_data.substr(offsetof(Packet, type)));
-    auto public_key = ecdsa_signature::recover_and_verify(
+    auto public_key = ecdsa_signature::verify_and_recover(
         ByteView(type_and_data_hash.bytes),
         ByteView(packet->signature));
 
-    common::Message message{
+    Message message{
         packet->type,
         Bytes(packet_data.substr(offsetof(Packet, data))),
     };

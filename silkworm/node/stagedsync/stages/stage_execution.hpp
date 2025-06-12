@@ -18,17 +18,29 @@
 
 #include <boost/circular_buffer.hpp>
 
+#include <silkworm/core/chain/config.hpp>
 #include <silkworm/core/execution/evm.hpp>
 #include <silkworm/core/protocol/rule_set.hpp>
-#include <silkworm/node/stagedsync/stages/stage.hpp>
+#include <silkworm/db/access_layer.hpp>
+#include <silkworm/db/prune_mode.hpp>
+#include <silkworm/db/stage.hpp>
 
 namespace silkworm::stagedsync {
 
 class Execution final : public Stage {
   public:
-    explicit Execution(NodeSettings* node_settings, SyncContext* sync_context)
-        : Stage(sync_context, db::stages::kExecutionKey, node_settings),
-          rule_set_{protocol::rule_set_factory(node_settings->chain_config.value())} {}
+    Execution(
+        SyncContext* sync_context,
+        db::DataModelFactory data_model_factory,
+        const ChainConfig& chain_config,
+        size_t batch_size,
+        db::PruneMode prune_mode)
+        : Stage(sync_context, db::stages::kExecutionKey),
+          data_model_factory_(std::move(data_model_factory)),
+          chain_config_(chain_config),
+          batch_size_(batch_size),
+          prune_mode_(prune_mode),
+          rule_set_{protocol::rule_set_factory(chain_config)} {}
 
     ~Execution() override = default;
 
@@ -40,6 +52,10 @@ class Execution final : public Stage {
   private:
     static constexpr size_t kMaxPrefetchedBlocks{10240};
 
+    db::DataModelFactory data_model_factory_;
+    const ChainConfig& chain_config_;
+    size_t batch_size_;
+    db::PruneMode prune_mode_;
     protocol::RuleSetPtr rule_set_;
     BlockNum block_num_{0};
     boost::circular_buffer<Block> prefetched_blocks_{/*buffer_capacity=*/kMaxPrefetchedBlocks};
@@ -54,16 +70,16 @@ class Execution final : public Stage {
     //! \brief Executes a batch of blocks
     //! \remarks A batch completes when either max block is reached or buffer dimensions overflow
     Stage::Result execute_batch(db::RWTxn& txn, BlockNum max_block_num, AnalysisCache& analysis_cache,
-                                ObjectPool<evmone::ExecutionState>& state_pool, BlockNum prune_history_threshold,
-                                BlockNum prune_receipts_threshold);
+                                BlockNum prune_history_threshold, BlockNum prune_receipts_threshold,
+                                BlockNum prune_call_traces_threshold);
 
     //! \brief For given changeset cursor/bucket it reverts the changes on states buckets
-    static void unwind_state_from_changeset(db::ROCursor& source_changeset, db::RWCursorDupSort& plain_state_table,
-                                            db::RWCursor& plain_code_table, BlockNum unwind_to);
+    static void unwind_state_from_changeset(datastore::kvdb::ROCursor& source_changeset, datastore::kvdb::RWCursorDupSort& plain_state_table,
+                                            datastore::kvdb::RWCursor& plain_code_table, BlockNum unwind_to);
 
     //! \brief Revert State for given address/storage location
-    static void revert_state(ByteView key, ByteView value, db::RWCursorDupSort& plain_state_table,
-                             db::RWCursor& plain_code_table);
+    static void revert_state(ByteView key, ByteView value, datastore::kvdb::RWCursorDupSort& plain_state_table,
+                             datastore::kvdb::RWCursor& plain_code_table);
 
     // Stats
     std::mutex progress_mtx_;  // Synchronizes access to progress stats

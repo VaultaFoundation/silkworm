@@ -33,24 +33,27 @@ namespace silkworm::sentry::rlpx {
 class Client {
   public:
     Client(
-        common::EccKeyPair node_key,
+        EccKeyPair node_key,
         std::string client_id,
         uint16_t node_listen_port,
+        size_t max_retries,
         std::function<std::unique_ptr<Protocol>()> protocol_factory)
         : node_key_(std::move(node_key)),
           client_id_(std::move(client_id)),
           node_listen_port_(node_listen_port),
+          max_retries_(max_retries),
           protocol_factory_(std::move(protocol_factory)) {
     }
 
     Task<std::unique_ptr<Peer>> connect(
-        common::EnodeUrl peer_url,
+        EnodeUrl peer_url,
         bool is_static_peer);
 
   private:
-    common::EccKeyPair node_key_;
+    EccKeyPair node_key_;
     std::string client_id_;
     uint16_t node_listen_port_;
+    size_t max_retries_;
     std::function<std::unique_ptr<Protocol>()> protocol_factory_;
 };
 

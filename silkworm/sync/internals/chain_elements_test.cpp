@@ -18,20 +18,19 @@
 
 #include <algorithm>
 
-#include <catch2/catch.hpp>
+#include <catch2/catch_test_macros.hpp>
 #include <evmc/evmc.hpp>
 
-#include <silkworm/core/common/cast.hpp>
+#include <silkworm/core/common/bytes_to_string.hpp>
 
 namespace silkworm {
 
 TEST_CASE("links") {
-    PeerId peer_id{byte_ptr_cast("dummy")};
     bool persisted = false;
 
     std::array<BlockHeader, 5> headers;
 
-    for (size_t i = 1; i < headers.size(); i++) {  // skip first header for simplicity
+    for (size_t i = 1; i < headers.size(); ++i) {  // skip first header for simplicity
         headers[i].number = i;
         headers[i].difficulty = i * 100;  // improve!
         headers[i].parent_hash = headers[i - 1].hash();
@@ -44,15 +43,15 @@ TEST_CASE("links") {
 
     SECTION("construction") {
         REQUIRE(*(link1.header) == headers[1]);
-        REQUIRE(link1.blockHeight == headers[1].number);
+        REQUIRE(link1.block_num == headers[1].number);
         REQUIRE(link1.hash == headers[1].hash());
         REQUIRE(link1.persisted == persisted);
         REQUIRE(link1.preverified == false);
         REQUIRE(link1.next.empty());
 
-        headers[1].number = 100;          // only for the following test
-        REQUIRE(link1.blockHeight == 1);  // link1 has a copy of headers[1]
-        headers[1].number = 1;            // ok
+        headers[1].number = 100;        // only for the following test
+        REQUIRE(link1.block_num == 1);  // link1 has a copy of headers[1]
+        headers[1].number = 1;          // ok
     }
 
     SECTION("children") {
@@ -90,7 +89,7 @@ TEST_CASE("anchors") {
 
     std::array<BlockHeader, 5> headers;
 
-    for (size_t i = 1; i < headers.size(); i++) {  // skip first header for simplicity
+    for (size_t i = 1; i < headers.size(); ++i) {  // skip first header for simplicity
         headers[i].number = i;
         headers[i].difficulty = i * 100;  // improve!
         headers[i].parent_hash = headers[i - 1].hash();
@@ -100,24 +99,24 @@ TEST_CASE("anchors") {
 
     std::array<std::shared_ptr<Link>, 5> links;
 
-    for (size_t i = 1; i < links.size(); i++) {  // skip first header for simplicity
+    for (size_t i = 1; i < links.size(); ++i) {  // skip first header for simplicity
         links[i] = std::make_shared<Link>(headers[i], persisted);
     }
 
     SECTION("construction") {
-        REQUIRE(anchor.parentHash == headers[1].parent_hash);
-        REQUIRE(anchor.blockHeight == headers[1].number);
-        REQUIRE(anchor.lastLinkHeight == headers[1].number);
-        REQUIRE(anchor.peerId == peer_id);
+        REQUIRE(anchor.parent_hash == headers[1].parent_hash);
+        REQUIRE(anchor.block_num == headers[1].number);
+        REQUIRE(anchor.last_link_block_num == headers[1].number);
+        REQUIRE(anchor.peer_id == peer_id);
         REQUIRE(anchor.links.empty());
-        REQUIRE(anchor.chainLength() == 1);
+        REQUIRE(anchor.chain_length() == 1);
     }
 
     SECTION("children") {
         REQUIRE(anchor.find_child(headers[1].hash()) == anchor.links.end());
         REQUIRE(anchor.has_child(headers[1].hash()) == false);
 
-        for (size_t i = 1; i <= 3; i++) {
+        for (size_t i = 1; i <= 3; ++i) {
             anchor.links.push_back(links[i]);
         }
 
@@ -142,7 +141,7 @@ TEST_CASE("anchors") {
 
 TEST_CASE("segments") {
     std::vector<BlockHeader> headers(10);
-    for (size_t i = 0; i < headers.size(); i++) {  // skip first header for simplicity
+    for (size_t i = 0; i < headers.size(); ++i) {  // skip first header for simplicity
         headers[i].number = i;
         headers[i].difficulty = i * 100;  // improve!
         headers[i].parent_hash = (i != 0) ? headers[i - 1].hash() : evmc::bytes32{0};
@@ -152,28 +151,28 @@ TEST_CASE("segments") {
 
     auto [segments, penality] = header_list->split_into_segments();
     REQUIRE(segments.size() == 1);
-    REQUIRE(penality == NoPenalty);
+    REQUIRE(penality == kNoPenalty);
 
     Segment segment = segments[0];
     REQUIRE(segment.lowest_header()->number == headers[0].number);
-    REQUIRE(segment.highest_header()->number == headers[headers.size() - 1].number);
+    REQUIRE(segment.max_header()->number == headers[headers.size() - 1].number);
     REQUIRE(segment[0]->number == headers[headers.size() - 1].number);  // segment is reversed
     REQUIRE(segment[segment.size() - 1]->number == headers[0].number);  // "
 
     size_t start = 2;
     size_t end = 5;
-    auto startNum = segment[start]->number;
-    auto endNum = segment[end - 1]->number;
+    auto start_num = segment[start]->number;
+    auto end_num = segment[end - 1]->number;
 
     Segment::Slice segment_slice = segment.slice(start, end);
     REQUIRE(segment_slice.size() == end - start);
-    REQUIRE(segment_slice[0]->number == startNum);                       // headers in segment are ordered from highest to lowest
-    REQUIRE(segment_slice[segment_slice.size() - 1]->number == endNum);  // "
+    REQUIRE(segment_slice[0]->number == start_num);                       // headers in segment are ordered from max to lowest
+    REQUIRE(segment_slice[segment_slice.size() - 1]->number == end_num);  // "
 
     segment.remove_headers_higher_than(3);
     REQUIRE(segment.size() == 4);
     REQUIRE(segment.lowest_header()->number == headers[0].number);
-    REQUIRE(segment.highest_header()->number == 3);
+    REQUIRE(segment.max_header()->number == 3);
     REQUIRE(segment[0]->number == 3);
     REQUIRE(segment[segment.size() - 1]->number == headers[0].number);
 }

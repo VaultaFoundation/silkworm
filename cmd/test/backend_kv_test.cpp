@@ -31,16 +31,15 @@
 #include <magic_enum.hpp>
 
 #include <silkworm/core/common/assert.hpp>
-#include <silkworm/core/common/endian.hpp>
 #include <silkworm/core/common/util.hpp>
+#include <silkworm/core/types/address.hpp>
+#include <silkworm/db/tables.hpp>
+#include <silkworm/infra/cli/shutdown_signal.hpp>
 #include <silkworm/infra/common/log.hpp>
 #include <silkworm/infra/grpc/common/conversion.hpp>
 #include <silkworm/infra/grpc/common/util.hpp>
 #include <silkworm/interfaces/remote/ethbackend.grpc.pb.h>
 #include <silkworm/interfaces/remote/kv.grpc.pb.h>
-#include <silkworm/node/db/tables.hpp>
-
-#include "../common/shutdown_signal.hpp"
 
 using namespace std::literals;
 
@@ -94,8 +93,10 @@ class AsyncUnaryCall : public AsyncCall {
     static UnaryStats stats() { return unary_stats_; }
 
     explicit AsyncUnaryCall(grpc::CompletionQueue* queue, StubInterface* stub, CompletionFunc completion_handler = {})
-        : AsyncCall(queue), stub_(stub), completion_handler_(std::move(completion_handler)) {
-        finish_processor_ = [&](bool ok) { process_finish(ok); };
+        : AsyncCall(queue),
+          stub_(stub),
+          finish_processor_([&](bool ok) { process_finish(ok); }),
+          completion_handler_(std::move(completion_handler)) {
     }
 
     void start(const Request& request) {
@@ -127,7 +128,7 @@ class AsyncUnaryCall : public AsyncCall {
 
     virtual void handle_finish(bool /*ok*/) {}
 
-    inline static UnaryStats unary_stats_;
+    static inline UnaryStats unary_stats_;
 
     StubInterface* stub_;
     Reply reply_;
@@ -164,10 +165,11 @@ class AsyncServerStreamingCall : public AsyncCall {
     static ServerStreamingStats stats() { return server_streaming_stats_; }
 
     explicit AsyncServerStreamingCall(grpc::CompletionQueue* queue, StubInterface* stub)
-        : AsyncCall(queue), stub_(stub) {
-        start_processor_ = [&](bool ok) { process_start(ok); };
-        read_processor_ = [&](bool ok) { process_read(ok); };
-        finish_processor_ = [&](bool ok) { process_finish(ok); };
+        : AsyncCall(queue),
+          start_processor_([&](bool ok) { process_start(ok); }),
+          read_processor_([&](bool ok) { process_read(ok); }),
+          finish_processor_([&](bool ok) { process_finish(ok); }),
+          stub_(stub) {
     }
 
     void start(const Request& request) {
@@ -250,7 +252,7 @@ class AsyncServerStreamingCall : public AsyncCall {
     virtual void handle_read() = 0;
     virtual void handle_finish() = 0;
 
-    inline static ServerStreamingStats server_streaming_stats_;
+    static inline ServerStreamingStats server_streaming_stats_;
 
     TagProcessor start_processor_;
     TagProcessor read_processor_;
@@ -290,12 +292,13 @@ class AsyncBidirectionalStreamingCall : public AsyncCall {
     static BidirectionalStreamingStats stats() { return bidi_streaming_stats_; }
 
     explicit AsyncBidirectionalStreamingCall(grpc::CompletionQueue* queue, StubInterface* stub)
-        : AsyncCall(queue), stub_(stub) {
-        start_processor_ = [&](bool ok) { process_start(ok); };
-        read_processor_ = [&](bool ok) { process_read(ok); };
-        write_processor_ = [&](bool ok) { process_write(ok); };
-        writes_done_processor_ = [&](bool ok) { process_writes_done(ok); };
-        finish_processor_ = [&](bool ok) { process_finish(ok); };
+        : AsyncCall(queue),
+          start_processor_([&](bool ok) { process_start(ok); }),
+          read_processor_([&](bool ok) { process_read(ok); }),
+          write_processor_([&](bool ok) { process_write(ok); }),
+          writes_done_processor_([&](bool ok) { process_writes_done(ok); }),
+          finish_processor_([&](bool ok) { process_finish(ok); }),
+          stub_(stub) {
     }
 
     void start() {
@@ -441,7 +444,7 @@ class AsyncBidirectionalStreamingCall : public AsyncCall {
     virtual bool handle_write() = 0;
     virtual void handle_finish() = 0;
 
-    inline static BidirectionalStreamingStats bidi_streaming_stats_;
+    static inline BidirectionalStreamingStats bidi_streaming_stats_;
 
     enum class State {
         kIdle,
@@ -480,7 +483,7 @@ class AsyncEtherbaseCall : public AsyncUnaryCall<
         if (ok && status_.ok()) {
             if (reply_.has_address()) {
                 const auto h160_address = reply_.address();
-                const auto address = silkworm::to_hex(silkworm::rpc::address_from_H160(h160_address));
+                const auto address = silkworm::rpc::address_from_h160(h160_address);
                 SILK_INFO << "Etherbase reply: " << address << " [latency=" << latency() / 1ns << " ns]";
             } else {
                 SILK_INFO << "Etherbase reply: no address";
@@ -691,29 +694,27 @@ class AsyncTxCall
             if (cursor_id_ == kInvalidCursorId) {
                 SILK_DEBUG << "Tx cursor closed, closing tx";
                 return true;  // reads done, close tx
-            } else {
-                SILK_INFO << "Tx queried: " << reply_ << ", queries done closing cursor";
-                request_.set_op(remote::Op::CLOSE);
-                request_.set_cursor(cursor_id_);
-                cursor_id_ = kInvalidCursorId;
-                return false;
             }
-        } else {
-            if (cursor_id_ == kInvalidCursorId) {
-                SILK_INFO << "Tx opened: cursor=" << reply_.cursor_id();
-                cursor_id_ = reply_.cursor_id();
-                SILK_DEBUG << "Tx: prepare request FIRST cursor=" << cursor_id_;
-                request_.set_op(remote::Op::FIRST);
-                request_.set_cursor(cursor_id_);
-            } else {
-                SILK_INFO << "Tx queried: " << reply_;
-                --query_count_;
-                SILK_DEBUG << "Tx: prepare request NEXT cursor=" << cursor_id_;
-                request_.set_op(remote::Op::NEXT);
-                request_.set_cursor(cursor_id_);
-            }
+            SILK_INFO << "Tx queried: " << reply_ << ", queries done closing cursor";
+            request_.set_op(remote::Op::CLOSE);
+            request_.set_cursor(cursor_id_);
+            cursor_id_ = kInvalidCursorId;
             return false;
         }
+        if (cursor_id_ == kInvalidCursorId) {
+            SILK_INFO << "Tx opened: cursor=" << reply_.cursor_id();
+            cursor_id_ = reply_.cursor_id();
+            SILK_DEBUG << "Tx: prepare request FIRST cursor=" << cursor_id_;
+            request_.set_op(remote::Op::FIRST);
+            request_.set_cursor(cursor_id_);
+        } else {
+            SILK_INFO << "Tx queried: " << reply_;
+            --query_count_;
+            SILK_DEBUG << "Tx: prepare request NEXT cursor=" << cursor_id_;
+            request_.set_op(remote::Op::NEXT);
+            request_.set_cursor(cursor_id_);
+        }
+        return false;
     }
 
     bool handle_write() override {
@@ -731,8 +732,8 @@ class AsyncTxCall
     }
 
   private:
-    inline static const uint32_t kInvalidViewId{0};
-    inline static const uint32_t kInvalidCursorId{0};
+    static constexpr uint32_t kInvalidViewId{0};
+    static constexpr uint32_t kInvalidCursorId{0};
 
     uint32_t view_id_{kInvalidViewId};
     std::string table_name_{silkworm::db::table::kCanonicalHashes.name};
@@ -744,7 +745,7 @@ class AsyncStateChangesCall
     : public AsyncServerStreamingCall<remote::StateChangeRequest, remote::StateChangeBatch, remote::KV::StubInterface,
                                       &remote::KV::StubInterface::PrepareAsyncStateChanges> {
   public:
-    static std::size_t num_pending_calls() { return pending_calls_.size(); }
+    static size_t num_pending_calls() { return pending_calls_.size(); }
 
     static void add_pending_call(AsyncStateChangesCall* call) {
         pending_calls_.push_back(call);
@@ -783,21 +784,21 @@ class AsyncStateChangesCall
     }
 
   private:
-    inline static std::vector<AsyncStateChangesCall*> pending_calls_;
+    static inline std::vector<AsyncStateChangesCall*> pending_calls_;
 };
 
 enum class Rpc {
-    etherbase = 0,
-    net_version = 1,
-    net_peer_count = 2,
-    backend_version = 3,
-    protocol_version = 4,
-    client_version = 5,
-    subscribe = 6,
-    node_info = 7,
-    kv_version = 8,
-    tx = 9,
-    state_changes = 10
+    kEtherbase = 0,
+    kNetVersion = 1,
+    kNetPeerCount = 2,
+    kBackendVersion = 3,
+    kProtocolVersion = 4,
+    kClientVersion = 5,
+    kSubscribe = 6,
+    kNodeInfo = 7,
+    kKvVersion = 8,
+    kTx = 9,
+    kStateChanges = 10
 };
 
 struct BatchOptions {
@@ -805,12 +806,12 @@ struct BatchOptions {
     std::vector<Rpc> configured_calls;
     int64_t interval_between_calls{100};
 
-    [[nodiscard]] bool is_configured(Rpc call) const {
+    bool is_configured(Rpc call) const {
         return configured_calls.empty() || contains_call(call);
     }
 
   private:
-    [[nodiscard]] bool contains_call(Rpc call) const {
+    bool contains_call(Rpc call) const {
         return std::find(configured_calls.begin(), configured_calls.end(), call) != configured_calls.end();
     }
 };
@@ -823,68 +824,68 @@ class AsyncCallFactory {
           kv_stub_{remote::KV::NewStub(channel, grpc::StubOptions{})} {}
 
     void start_batch(std::atomic_bool& stop, const BatchOptions& batch_options) {
-        for (auto i{0}; i < batch_options.batch_size && !stop; i++) {
-            if (batch_options.is_configured(Rpc::etherbase)) {
+        for (auto i{0}; i < batch_options.batch_size && !stop; ++i) {
+            if (batch_options.is_configured(Rpc::kEtherbase)) {
                 auto* etherbase = new AsyncEtherbaseCall(queue_, ethbackend_stub_.get());
                 etherbase->start(remote::EtherbaseRequest{});
                 SILK_DEBUG << "New Etherbase async call started: " << etherbase;
             }
 
-            if (batch_options.is_configured(Rpc::net_version)) {
+            if (batch_options.is_configured(Rpc::kNetVersion)) {
                 auto* net_version = new AsyncNetVersionCall(queue_, ethbackend_stub_.get());
                 net_version->start(remote::NetVersionRequest{});
                 SILK_DEBUG << "New NetVersion async call started: " << net_version;
             }
 
-            if (batch_options.is_configured(Rpc::net_peer_count)) {
+            if (batch_options.is_configured(Rpc::kNetPeerCount)) {
                 auto* net_peer_count = new AsyncNetPeerCountCall(queue_, ethbackend_stub_.get());
                 net_peer_count->start(remote::NetPeerCountRequest{});
                 SILK_DEBUG << "New NetPeerCount async call started: " << net_peer_count;
             }
 
-            if (batch_options.is_configured(Rpc::backend_version)) {
+            if (batch_options.is_configured(Rpc::kBackendVersion)) {
                 auto* backend_version = new AsyncBackEndVersionCall(queue_, ethbackend_stub_.get());
                 backend_version->start(google::protobuf::Empty{});
                 SILK_DEBUG << "New ETHBACKEND Version async call started: " << backend_version;
             }
 
-            if (batch_options.is_configured(Rpc::protocol_version)) {
+            if (batch_options.is_configured(Rpc::kProtocolVersion)) {
                 auto* protocol_version = new AsyncProtocolVersionCall(queue_, ethbackend_stub_.get());
                 protocol_version->start(remote::ProtocolVersionRequest{});
                 SILK_DEBUG << "New ProtocolVersion async call started: " << protocol_version;
             }
 
-            if (batch_options.is_configured(Rpc::client_version)) {
+            if (batch_options.is_configured(Rpc::kClientVersion)) {
                 auto* client_version = new AsyncClientVersionCall(queue_, ethbackend_stub_.get());
                 client_version->start(remote::ClientVersionRequest{});
                 SILK_DEBUG << "New ClientVersion async call started: " << client_version;
             }
 
-            if (batch_options.is_configured(Rpc::subscribe)) {
+            if (batch_options.is_configured(Rpc::kSubscribe)) {
                 auto* subscribe = new AsyncSubscribeCall(queue_, ethbackend_stub_.get());
                 subscribe->start(remote::SubscribeRequest{});
                 SILK_DEBUG << "New Subscribe async call started: " << subscribe;
             }
 
-            if (batch_options.is_configured(Rpc::node_info)) {
+            if (batch_options.is_configured(Rpc::kNodeInfo)) {
                 auto* node_info = new AsyncNodeInfoCall(queue_, ethbackend_stub_.get());
                 node_info->start(remote::NodesInfoRequest{});
                 SILK_DEBUG << "New NodeInfo async call started: " << node_info;
             }
 
-            if (batch_options.is_configured(Rpc::kv_version)) {
+            if (batch_options.is_configured(Rpc::kKvVersion)) {
                 auto* kv_version = new AsyncKvVersionCall(queue_, kv_stub_.get());
                 kv_version->start(google::protobuf::Empty{});
                 SILK_DEBUG << "New KV Version async call started: " << kv_version;
             }
 
-            if (batch_options.is_configured(Rpc::tx)) {
+            if (batch_options.is_configured(Rpc::kTx)) {
                 auto* tx = new AsyncTxCall(queue_, kv_stub_.get());
                 tx->start();
                 SILK_DEBUG << "New Tx async call started: " << tx;
             }
 
-            if (batch_options.is_configured(Rpc::state_changes) && AsyncStateChangesCall::num_pending_calls() < 10000) {
+            if (batch_options.is_configured(Rpc::kStateChanges) && AsyncStateChangesCall::num_pending_calls() < 10000) {
                 auto* state_changes = new AsyncStateChangesCall(queue_, kv_stub_.get());
                 state_changes->start(remote::StateChangeRequest{});
                 SILK_DEBUG << "New StateChanges async call started: " << state_changes;
@@ -900,37 +901,37 @@ class AsyncCallFactory {
 };
 
 void print_stats(const BatchOptions& batch_options) {
-    if (batch_options.is_configured(Rpc::etherbase)) {
+    if (batch_options.is_configured(Rpc::kEtherbase)) {
         SILK_LOG << "Unary stats Etherbase: " << AsyncEtherbaseCall::stats();
     }
-    if (batch_options.is_configured(Rpc::net_version)) {
+    if (batch_options.is_configured(Rpc::kNetVersion)) {
         SILK_LOG << "Unary stats NetVersion: " << AsyncNetVersionCall::stats();
     }
-    if (batch_options.is_configured(Rpc::net_peer_count)) {
+    if (batch_options.is_configured(Rpc::kNetPeerCount)) {
         SILK_LOG << "Unary stats NetPeerCount: " << AsyncNetPeerCountCall::stats();
     }
-    if (batch_options.is_configured(Rpc::backend_version)) {
+    if (batch_options.is_configured(Rpc::kBackendVersion)) {
         SILK_LOG << "Unary stats ETHBACKEND Version: " << AsyncBackEndVersionCall::stats();
     }
-    if (batch_options.is_configured(Rpc::protocol_version)) {
+    if (batch_options.is_configured(Rpc::kProtocolVersion)) {
         SILK_LOG << "Unary stats ProtocolVersion: " << AsyncProtocolVersionCall::stats();
     }
-    if (batch_options.is_configured(Rpc::client_version)) {
+    if (batch_options.is_configured(Rpc::kClientVersion)) {
         SILK_LOG << "Unary stats ClientVersion: " << AsyncClientVersionCall::stats();
     }
-    if (batch_options.is_configured(Rpc::node_info)) {
+    if (batch_options.is_configured(Rpc::kNodeInfo)) {
         SILK_LOG << "Unary stats NodeInfo: " << AsyncNodeInfoCall::stats();
     }
-    if (batch_options.is_configured(Rpc::kv_version)) {
+    if (batch_options.is_configured(Rpc::kKvVersion)) {
         SILK_LOG << "Unary stats KV Version: " << AsyncKvVersionCall::stats();
     }
-    if (batch_options.is_configured(Rpc::subscribe)) {
+    if (batch_options.is_configured(Rpc::kSubscribe)) {
         SILK_LOG << "Server streaming stats Subscribe: " << AsyncSubscribeCall::stats();
     }
-    if (batch_options.is_configured(Rpc::state_changes)) {
+    if (batch_options.is_configured(Rpc::kStateChanges)) {
         SILK_LOG << "Server streaming stats StateChanges: " << AsyncStateChangesCall::stats();
     }
-    if (batch_options.is_configured(Rpc::tx)) {
+    if (batch_options.is_configured(Rpc::kTx)) {
         SILK_LOG << "Bidirectional streaming stats Tx: " << AsyncTxCall::stats();
     }
 }
@@ -972,9 +973,6 @@ int main(int argc, char* argv[]) {
     log_settings.log_verbosity = log_level;
     silkworm::log::init(log_settings);
 
-    // TODO(canepat): this could be an option in Silkworm logging facility
-    silkworm::rpc::Grpc2SilkwormLogGuard log_guard;
-
     try {
         std::vector<std::shared_ptr<grpc::Channel>> channels;
         for (int i{0}; i < num_channels; ++i) {
@@ -990,7 +988,7 @@ int main(int argc, char* argv[]) {
         std::atomic_bool pump_stop{false};
         std::thread pump_thread{[&]() {
             SILK_TRACE << "Pump thread: " << pump_thread.get_id() << " start";
-            std::size_t channel_index{0};
+            size_t channel_index{0};
             while (!pump_stop) {
                 AsyncCallFactory call_factory{channels[channel_index], &queue};
                 call_factory.start_batch(pump_stop, batch_options);
@@ -1024,17 +1022,17 @@ int main(int argc, char* argv[]) {
             SILK_TRACE << "Completion thread: " << completion_thread.get_id() << " end";
         }};
 
-        boost::asio::io_context scheduler;
-        silkworm::cmd::common::ShutdownSignal shutdown_signal{scheduler};
+        boost::asio::io_context shutdown_signal_ioc;
+        silkworm::cmd::common::ShutdownSignal shutdown_signal{shutdown_signal_ioc.get_executor()};
         shutdown_signal.on_signal([&](silkworm::cmd::common::ShutdownSignal::SignalNumber /*num*/) {
             pump_stop = true;
             completion_stop = true;
             shutdown_requested.notify_one();
-            scheduler.stop();
+            shutdown_signal_ioc.stop();
         });
 
         SILK_LOG << "ETHBACKEND & KV interface test running [pid=" << pid << ", main thread=" << tid << "]";
-        scheduler.run();
+        shutdown_signal_ioc.run();
 
         // Order matters here: 1) wait for pump thread exit 2) shutdown gRPC CQ 3) wait for completion thread exit
         if (pump_thread.joinable()) {

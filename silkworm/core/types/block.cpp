@@ -16,39 +16,29 @@
 
 #include "block.hpp"
 
-#include <silkworm/core/common/cast.hpp>
+#include <bit>
+
 #include <silkworm/core/protocol/param.hpp>
 #include <silkworm/core/rlp/decode_vector.hpp>
 #include <silkworm/core/rlp/encode_vector.hpp>
+#include <silkworm/core/types/address.hpp>
+#include <silkworm/core/types/evmc_bytes32.hpp>
 
 namespace silkworm {
-
-bool operator==(const BlockHeader& a, const BlockHeader& b) {
-    return a.parent_hash == b.parent_hash && a.ommers_hash == b.ommers_hash && a.beneficiary == b.beneficiary &&
-           a.state_root == b.state_root && a.transactions_root == b.transactions_root &&
-           a.receipts_root == b.receipts_root && a.logs_bloom == b.logs_bloom && a.difficulty == b.difficulty &&
-           a.number == b.number && a.gas_limit == b.gas_limit && a.gas_used == b.gas_used &&
-           a.timestamp == b.timestamp && a.extra_data == b.extra_data && a.prev_randao == b.prev_randao &&
-           a.nonce == b.nonce && a.base_fee_per_gas == b.base_fee_per_gas;
-}
-
-bool operator==(const BlockBody& a, const BlockBody& b) {
-    return a.transactions == b.transactions && a.ommers == b.ommers;
-}
-
-BlockNum height(const BlockId& b) { return b.number; }
 
 evmc::bytes32 BlockHeader::hash(bool for_sealing, bool exclude_extra_data_sig) const {
     Bytes rlp;
     rlp::encode(rlp, *this, for_sealing, exclude_extra_data_sig);
-    return bit_cast<evmc_bytes32>(keccak256(rlp));
+    return std::bit_cast<evmc_bytes32>(keccak256(rlp));
 }
 
 ethash::hash256 BlockHeader::boundary() const {
     using intx::operator""_u256;
-    static const auto dividend{intx::uint320{1} << 256};
-    auto result{difficulty > 1u ? intx::uint256{dividend / difficulty}
-                                : 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff_u256};
+    static const intx::uint320 kDividend = intx::uint320{1} << 256;
+    intx::uint256 result =
+        (difficulty > 1u)
+            ? intx::uint256{kDividend / difficulty}
+            : 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff_u256;
     return intx::be::store<ethash::hash256>(result);
 }
 
@@ -66,22 +56,19 @@ static intx::uint256 fake_exponential(const intx::uint256& factor,
     return output / denominator;
 }
 
-std::optional<intx::uint256> BlockHeader::data_gas_price() const {
-    if (!excess_data_gas) {
+intx::uint256 calc_blob_gas_price(uint64_t excess_blob_gas) {
+    return fake_exponential(
+        protocol::kMinBlobGasPrice,
+        excess_blob_gas,
+        protocol::kBlobGasPriceUpdateFraction);
+}
+
+std::optional<intx::uint256> BlockHeader::blob_gas_price() const {
+    if (!excess_blob_gas) {
         return std::nullopt;
     }
 
-    return fake_exponential(
-        protocol::kMinDataGasPrice,
-        *excess_data_gas,
-        protocol::kDataGasPriceUpdateFraction);
-}
-
-//! \brief Recover transaction senders for each block.
-void Block::recover_senders() {
-    for (Transaction& txn : transactions) {
-        txn.recover_sender();
-    }
+    return calc_blob_gas_price(*excess_blob_gas);
 }
 
 namespace rlp {
@@ -101,7 +88,7 @@ namespace rlp {
         rlp_head.payload_length += length(header.gas_used);                                // gas_used
         rlp_head.payload_length += length(header.timestamp);                               // timestamp
         if (exclude_extra_data_sig) {
-            const auto extra_data_no_signature = header.extra_data.substr(0, header.extra_data.length() - kExtraSealSize);
+            const auto extra_data_no_signature = header.extra_data.substr(0, header.extra_data.length() - protocol::kExtraSealSize);
             rlp_head.payload_length += length(extra_data_no_signature);  // extra_data -signature
         } else {
             rlp_head.payload_length += length(header.extra_data);  // extra_data
@@ -116,11 +103,17 @@ namespace rlp {
         if (header.withdrawals_root) {
             rlp_head.payload_length += kHashLength + 1;
         }
-        if (header.data_gas_used) {
-            rlp_head.payload_length += length(*header.data_gas_used);
+        if (header.blob_gas_used) {
+            rlp_head.payload_length += length(*header.blob_gas_used);
         }
-        if (header.excess_data_gas) {
-            rlp_head.payload_length += length(*header.excess_data_gas);
+        if (header.excess_blob_gas) {
+            rlp_head.payload_length += length(*header.excess_blob_gas);
+        }
+        if (header.parent_beacon_block_root) {
+            rlp_head.payload_length += kHashLength + 1;
+        }
+        if (header.requests_hash) {
+            rlp_head.payload_length += kHashLength + 1;
         }
 
         return rlp_head;
@@ -146,7 +139,8 @@ namespace rlp {
         encode(to, header.gas_used);
         encode(to, header.timestamp);
         if (exclude_extra_data_sig) {
-            const auto extra_data_no_signature = header.extra_data.substr(0, header.extra_data.length() - kExtraSealSize);
+            SILKWORM_ASSERT(header.extra_data.length() >= protocol::kExtraSealSize);
+            const ByteView extra_data_no_signature{header.extra_data.data(), header.extra_data.length() - protocol::kExtraSealSize};
             encode(to, extra_data_no_signature);
         } else {
             encode(to, header.extra_data);
@@ -159,13 +153,19 @@ namespace rlp {
             encode(to, *header.base_fee_per_gas);
         }
         if (header.withdrawals_root) {
-            encode(to, static_cast<ByteView>(*header.withdrawals_root));
+            encode(to, *header.withdrawals_root);
         }
-        if (header.data_gas_used) {
-            encode(to, *header.data_gas_used);
+        if (header.blob_gas_used) {
+            encode(to, *header.blob_gas_used);
         }
-        if (header.excess_data_gas) {
-            encode(to, *header.excess_data_gas);
+        if (header.excess_blob_gas) {
+            encode(to, *header.excess_blob_gas);
+        }
+        if (header.parent_beacon_block_root) {
+            encode(to, *header.parent_beacon_block_root);
+        }
+        if (header.requests_hash) {
+            encode(to, *header.requests_hash);
         }
     }
 
@@ -221,14 +221,27 @@ namespace rlp {
         }
 
         if (from.length() > leftover) {
-            to.data_gas_used = 0;
-            to.excess_data_gas = 0;
-            if (DecodingResult res{decode_items(from, *to.data_gas_used, *to.excess_data_gas)}; !res) {
+            to.blob_gas_used = 0;
+            to.excess_blob_gas = 0;
+            to.parent_beacon_block_root = evmc::bytes32{};
+            if (DecodingResult res{decode_items(from, *to.blob_gas_used, *to.excess_blob_gas,
+                                                *to.parent_beacon_block_root)};
+                !res) {
                 return res;
             }
         } else {
-            to.data_gas_used = std::nullopt;
-            to.excess_data_gas = std::nullopt;
+            to.blob_gas_used = std::nullopt;
+            to.excess_blob_gas = std::nullopt;
+            to.parent_beacon_block_root = std::nullopt;
+        }
+
+        if (from.length() > leftover) {
+            to.requests_hash = evmc::bytes32{};
+            if (DecodingResult res{decode(from, *to.requests_hash, Leftover::kAllow)}; !res) {
+                return res;
+            }
+        } else {
+            to.requests_hash = std::nullopt;
         }
 
         if (from.length() != leftover) {

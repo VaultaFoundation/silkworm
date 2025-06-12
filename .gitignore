@@ -2,6 +2,7 @@ build*
 venv
 xcode
 *.code-workspace
+.DS_Store
 .idea
 .vscode
 .vs

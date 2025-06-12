@@ -19,6 +19,7 @@
 #include <intx/intx.hpp>
 
 #include <silkworm/core/common/base.hpp>
+#include <silkworm/core/common/bytes.hpp>
 #include <silkworm/sentry/common/message.hpp>
 
 #include "fork_id.hpp"
@@ -26,14 +27,14 @@
 namespace silkworm::sentry::eth {
 
 struct StatusMessage {
-    [[nodiscard]] Bytes rlp_encode() const;
-    [[nodiscard]] static StatusMessage rlp_decode(ByteView data);
+    Bytes rlp_encode() const;
+    static StatusMessage rlp_decode(ByteView data);
 
-    [[nodiscard]] common::Message to_message() const;
-    [[nodiscard]] static StatusMessage from_message(const common::Message& message);
+    Message to_message() const;
+    static StatusMessage from_message(const Message& message);
 
-    uint8_t version;
-    uint64_t network_id;
+    uint8_t version{0};
+    uint64_t network_id{0};
     intx::uint256 total_difficulty;
     Bytes best_block_hash;
     Bytes genesis_hash;

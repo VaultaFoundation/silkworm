@@ -22,20 +22,14 @@
 #include <intx/intx.hpp>
 
 #include <silkworm/core/common/base.hpp>
+#include <silkworm/core/common/bytes.hpp>
 #include <silkworm/core/common/hash_maps.hpp>
 #include <silkworm/core/state/delta.hpp>
 #include <silkworm/core/state/object.hpp>
 #include <silkworm/core/state/state.hpp>
 #include <silkworm/core/types/log.hpp>
-
+#include <evmone/filtered_message.hpp>
 namespace silkworm {
-
-struct FilteredMessage {
-  evmc::address   sender;
-  evmc::address   receiver;
-  evmc_uint256be  value;
-  silkworm::Bytes data;
-};
 
 class IntraBlockState {
   public:
@@ -77,6 +71,7 @@ class IntraBlockState {
     void destruct_touched_dead();
 
     size_t number_of_self_destructs() const noexcept { return self_destructs_.size(); }
+    bool is_self_destructed(const evmc::address& address) const noexcept;
 
     intx::uint256 get_balance(const evmc::address& address) const noexcept;
     void set_balance(const evmc::address& address, const intx::uint256& value) noexcept;
@@ -103,27 +98,42 @@ class IntraBlockState {
 
     void set_storage(const evmc::address& address, const evmc::bytes32& key, const evmc::bytes32& value) noexcept;
 
-    void write_to_db(uint64_t block_number);
+    void write_to_db(uint64_t block_num);
 
     Snapshot take_snapshot() const noexcept;
     void revert_to_snapshot(const Snapshot& snapshot) noexcept;
 
-    void finalize_transaction();
+    void finalize_transaction(evmc_revision rev);
 
     // See Section 6.1 "Substate" of the Yellow Paper
     void clear_journal_and_substate();
     void reset();
 
     void add_log(const Log& log) noexcept;
-    void add_filtered_message(const FilteredMessage& msg) noexcept;
+    void add_filtered_message(const evmone::eosevm::filtered_message& msg) noexcept;
 
     std::vector<Log>& logs() noexcept { return logs_; }
     const std::vector<Log>& logs() const noexcept { return logs_; }
 
-    std::vector<FilteredMessage>& filtered_messages() noexcept { return filtered_messages_; }
-    const std::vector<FilteredMessage>& filtered_messages() const noexcept { return filtered_messages_; }
+    std::vector<evmone::eosevm::filtered_message>& filtered_messages() noexcept {
+      return filtered_messages_;
+    }
+
+    const std::vector<evmone::eosevm::filtered_message>& filtered_messages() const noexcept {
+      return filtered_messages_;
+    }
+
+    void set_filtered_messages(const std::vector<evmone::eosevm::filtered_message>& filtered_messages) noexcept {
+      filtered_messages_ = filtered_messages;
+    }
 
     const FlatHashSet<evmc::address>& touched() const noexcept { return touched_; }
+
+    const FlatHashSet<evmc::address>& created() const noexcept { return created_; }
+
+    evmc::bytes32 get_transient_storage(const evmc::address& address, const evmc::bytes32& key);
+
+    void set_transient_storage(const evmc::address& addr, const evmc::bytes32& key, const evmc::bytes32& value);
 
     const FlatHashMap<evmc::address, state::Object>& reserved_objects() const noexcept { return reserved_objects_; }
     void reset_reserved_objects() { reserved_objects_.clear(); }
@@ -139,6 +149,9 @@ class IntraBlockState {
     friend class state::StorageCreateDelta;
     friend class state::StorageAccessDelta;
     friend class state::AccountAccessDelta;
+    friend class state::TransientStorageChangeDelta;
+    friend class StateView;
+    friend class ExecutionProcessor;
 
     evmc::bytes32 get_storage(const evmc::address& address, const evmc::bytes32& key, bool original) const noexcept;
 
@@ -162,11 +175,14 @@ class IntraBlockState {
     // substate
     FlatHashSet<evmc::address> self_destructs_;
     std::vector<Log> logs_;
-    std::vector<FilteredMessage> filtered_messages_;
+    std::vector<evmone::eosevm::filtered_message> filtered_messages_;
     FlatHashSet<evmc::address> touched_;
+    FlatHashSet<evmc::address> created_;  // required for EIP-6780
     // EIP-2929 substate
     FlatHashSet<evmc::address> accessed_addresses_;
     FlatHashMap<evmc::address, FlatHashSet<evmc::bytes32>> accessed_storage_keys_;
+
+    FlatHashMap<evmc::address, FlatHashMap<evmc::bytes32, evmc::bytes32>> transient_storage_;
 };
 
 }  // namespace silkworm

@@ -18,25 +18,31 @@
 
 #include <cmath>
 #include <cstring>
+#include <iomanip>
+#include <iostream>
 #include <optional>
+#include <regex>
 #include <string_view>
 #include <vector>
-#include <endian.h>
 
 #include <ethash/keccak.hpp>
 #include <intx/intx.hpp>
 
 #include <silkworm/core/common/base.hpp>
+#include <silkworm/core/common/bytes.hpp>
+#include <silkworm/core/types/address.hpp>
+// intx does not include operator<< overloading for uint<N>
+namespace intx {
+
+template <unsigned N>
+inline std::ostream& operator<<(std::ostream& out, const uint<N>& value) {
+    out << "0x" << intx::hex(value);
+    return out;
+}
+
+}  // namespace intx
 
 namespace silkworm {
-
-// Converts bytes to evmc::address; input is cropped if necessary.
-// Short inputs are left-padded with 0s.
-evmc::address to_evmc_address(ByteView bytes);
-
-// Converts bytes to evmc::bytes32; input is cropped if necessary.
-// Short inputs are left-padded with 0s.
-evmc::bytes32 to_bytes32(ByteView bytes);
 
 //! \brief Strips leftmost zeroed bytes from byte sequence
 //! \param [in] data : The view to process
@@ -47,11 +53,36 @@ inline bool has_hex_prefix(std::string_view s) {
     return s.length() >= 2 && s[0] == '0' && (s[1] == 'x' || s[1] == 'X');
 }
 
+inline bool is_valid_hex(std::string_view s) {
+    static const std::regex kHexRegex("^0x[0-9a-fA-F]+$");
+    return std::regex_match(s.data(), kHexRegex);
+}
+
+inline bool is_valid_dec(std::string_view s) {
+    static const std::regex kHexRegex("^[0-9]+$");
+    return std::regex_match(s.data(), kHexRegex);
+}
+
+inline bool is_valid_hash(std::string_view s) {
+    if (s.length() != 2 + kHashLength * 2) {
+        return false;
+    }
+    return is_valid_hex(s);
+}
+
+inline bool is_valid_address(std::string_view s) {
+    if (s.length() != 2 + kAddressLength * 2) {
+        return false;
+    }
+    return is_valid_hex(s);
+}
+
 //! \brief Returns a string representing the hex form of provided string of bytes
 std::string to_hex(ByteView bytes, bool with_prefix = false);
 
 //! \brief Returns a string representing the hex form of provided integral
-template <typename T, typename = std::enable_if_t<std::is_integral_v<T> && std::is_unsigned_v<T>>>
+template <typename T>
+    requires(std::is_integral_v<T> && std::is_unsigned_v<T>)
 std::string to_hex(T value, bool with_prefix = false) {
     uint8_t bytes[sizeof(T)];
     intx::be::store(bytes, value);
@@ -74,7 +105,7 @@ std::optional<Bytes> from_hex(std::string_view hex) noexcept;
 std::optional<uint64_t> parse_size(const std::string& sizestr);
 
 // Converts a number of bytes in a human-readable format
-std::string human_size(uint64_t bytes);
+std::string human_size(uint64_t bytes, const char* unit = "B");
 
 // Compares two strings for equality with case insensitivity
 bool iequals(std::string_view a, std::string_view b);
@@ -85,15 +116,15 @@ size_t prefix_length(ByteView a, ByteView b);
 inline ethash::hash256 keccak256(ByteView view) { return ethash::keccak256(view.data(), view.size()); }
 
 //! \brief Create an intx::uint256 from a string supporting both fixed decimal and scientific notation
-template <typename Int, std::enable_if_t<UnsignedIntegral<Int>, int> = 1>
-inline constexpr Int from_string_sci(const char* str) {
+template <UnsignedIntegral Int>
+constexpr Int from_string_sci(const char* str) {
     auto s = str;
     auto m = Int{};
 
     int num_digits = 0;
     int num_decimal_digits = 0;
     bool count_decimals{false};
-    char c=0;
+    char c = 0;
     while ((c = *s++)) {
         if (c == '.') {
             count_decimals = true;
@@ -103,14 +134,18 @@ inline constexpr Int from_string_sci(const char* str) {
             if (*s++ != '+') intx::throw_<std::out_of_range>(s);
             break;
         }
-        if (num_digits++ > std::numeric_limits<Int>::digits10)
+        if (num_digits++ > std::numeric_limits<Int>::digits10) {
             intx::throw_<std::out_of_range>(s);
-        if (count_decimals) ++num_decimal_digits;
+        }
+        if (count_decimals) {
+            ++num_decimal_digits;
+        }
 
         const auto d = intx::from_dec_digit(c);
         m = m * Int{10} + d;
-        if (m < d)
+        if (m < d) {
             intx::throw_<std::out_of_range>(s);
+        }
     }
     if (!c) {
         if (num_decimal_digits == 0) return m;
@@ -121,11 +156,13 @@ inline constexpr Int from_string_sci(const char* str) {
     while ((c = *s++)) {
         const auto d = intx::from_dec_digit(c);
         e = e * 10 + d;
-        if (e < d)
+        if (e < d) {
             intx::throw_<std::out_of_range>(s);
+        }
     }
-    if (e < num_decimal_digits)
+    if (e < num_decimal_digits) {
         intx::throw_<std::out_of_range>(s);
+    }
 
     auto x = m;
     auto exp = e - num_decimal_digits;
@@ -136,7 +173,22 @@ inline constexpr Int from_string_sci(const char* str) {
     return x;
 }
 
+inline std::ostream& operator<<(std::ostream& out, ByteView bytes) {
+    for (const auto& b : bytes) {
+        out << std::hex << std::setw(2) << std::setfill('0') << int{b};
+    }
+    out << std::dec;
+    return out;
+}
+
+inline std::ostream& operator<<(std::ostream& out, const Bytes& bytes) {
+    out << to_hex(bytes);
+    return out;
+}
+
 float to_float(const intx::uint256&) noexcept;
+
+std::string snake_to_camel(std::string_view snake);
 
 inline std::optional<uint64_t> extract_reserved_address(const evmc::address& addr) {
     constexpr uint8_t reserved_address_prefix[] = {0xbb, 0xbb, 0xbb, 0xbb,

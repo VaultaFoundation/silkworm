@@ -19,33 +19,31 @@
 #include <silkworm/infra/concurrency/task.hpp>
 
 #include <boost/asio/any_io_executor.hpp>
-#include <boost/asio/io_context.hpp>
 #include <boost/asio/ip/tcp.hpp>
 
 #include <silkworm/core/common/base.hpp>
+#include <silkworm/core/common/bytes.hpp>
 
-namespace silkworm::sentry::common {
+namespace silkworm::sentry {
 
 class SocketStream {
   public:
-    explicit SocketStream(boost::asio::any_io_executor&& executor) : socket_(executor) {}
-    explicit SocketStream(boost::asio::any_io_executor& executor) : socket_(executor) {}
-    explicit SocketStream(boost::asio::io_context& io_context) : socket_(io_context) {}
+    explicit SocketStream(const boost::asio::any_io_executor& executor) : socket_(executor) {}
 
     SocketStream(SocketStream&&) = default;
-    SocketStream& operator=(SocketStream&&) = default;
+    SocketStream& operator=(SocketStream&&) noexcept = default;
 
-    [[nodiscard]] boost::asio::ip::tcp::socket& socket() { return socket_; }
-    [[nodiscard]] const boost::asio::ip::tcp::socket& socket() const { return socket_; }
+    boost::asio::ip::tcp::socket& socket() { return socket_; }
+    const boost::asio::ip::tcp::socket& socket() const { return socket_; }
 
     Task<void> send(Bytes data);
 
     Task<uint16_t> receive_short();
-    Task<Bytes> receive_fixed(std::size_t size);
+    Task<Bytes> receive_fixed(size_t size);
     Task<ByteView> receive_size_and_data(Bytes& raw_data);
 
   private:
     boost::asio::ip::tcp::socket socket_;
 };
 
-}  // namespace silkworm::sentry::common
+}  // namespace silkworm::sentry

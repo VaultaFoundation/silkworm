@@ -18,16 +18,16 @@
 #include <memory>
 #include <stdexcept>
 
+#include <ethash/keccak.hpp>
 #include <nlohmann/json.hpp>
 
 #include "cmd/state-transition/expected_state.hpp"
-#include "silkworm/core/common/cast.hpp"
+#include "silkworm/core/common/bytes_to_string.hpp"
 #include "silkworm/core/execution/execution.hpp"
 #include "silkworm/core/protocol/rule_set.hpp"
 #include "silkworm/core/rlp/encode_vector.hpp"
 #include "silkworm/core/state/in_memory_state.hpp"
 #include "silkworm/sentry/common/ecc_key_pair.hpp"
-#include "third_party/ethash/include/ethash/keccak.hpp"
 
 namespace silkworm::cmd::state_transition {
 class StateTransition {
@@ -36,8 +36,8 @@ class StateTransition {
     std::string test_name_;
     unsigned total_count_{};
     unsigned failed_count_{};
-    bool terminate_on_error_;
-    bool show_diagnostics_;
+    bool terminate_on_error_{false};
+    bool show_diagnostics_{false};
 
     void print_message(const ExpectedState& expected_state, const ExpectedSubState& expected_sub_state, const std::string& message);
     void print_error_message(const ExpectedState& expected_state, const ExpectedSubState& expected_sub_state, const std::string& message);

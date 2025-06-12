@@ -15,16 +15,7 @@
 ]]
 
 string(TOLOWER ${CMAKE_HOST_SYSTEM_NAME} OS_NAME)
-
-if("${CMAKE_HOST_SYSTEM_PROCESSOR}" STREQUAL "")
-  set(ARCH_NAME x64)
-elseif(CMAKE_HOST_SYSTEM_PROCESSOR STREQUAL x86_64)
-  set(ARCH_NAME x64)
-elseif(CMAKE_HOST_SYSTEM_PROCESSOR STREQUAL IA64)
-  set(ARCH_NAME x64)
-elseif(CMAKE_HOST_SYSTEM_PROCESSOR STREQUAL AMD64)
-  set(ARCH_NAME x64)
-endif()
+set(ARCH_NAME x64)
 
 find_program(
   CLANG_FORMAT clang-format
@@ -39,10 +30,9 @@ file(
   "cmd/*.?pp" "silkworm/*.?pp"
 )
 list(FILTER SRC EXCLUDE REGEX "silkworm/interfaces/")
-list(FILTER SRC EXCLUDE REGEX "silkworm/core/chain/genesis_[a-z]+.cpp\$")
+list(FILTER SRC EXCLUDE REGEX "silkworm/core/chain/genesis_[a-z_]+.cpp\$")
 list(FILTER SRC EXCLUDE REGEX "silkworm/core/chain/dao.hpp$")
-list(FILTER SRC EXCLUDE REGEX "silkworm/node/common/preverified_hashes_[a-z]+.cpp\$")
-list(FILTER SRC EXCLUDE REGEX "silkworm/node/snapshot/config/[a-z_]+.cpp\$")
-list(FILTER SRC EXCLUDE REGEX "silkworm/node/snapshot/toml.hpp$$")
+list(FILTER SRC EXCLUDE REGEX "silkworm/rpc/json_rpc/specification.cpp\$")
+list(FILTER SRC EXCLUDE REGEX "silkworm/sync/internals/preverified_hashes/preverified_hashes_[a-z]+.cpp\$")
 
-execute_process(COMMAND ${CLANG_FORMAT} -style=file -i ${SRC})
+execute_process(COMMAND ${CLANG_FORMAT} -style=file -i ${SRC} COMMAND_ERROR_IS_FATAL ANY)

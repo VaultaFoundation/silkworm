@@ -16,51 +16,71 @@
 
 #include "intrinsic_gas.hpp"
 
-#include <catch2/catch.hpp>
+#include <catch2/catch_test_macros.hpp>
+
+#include <silkworm/core/chain/config.hpp>
 
 #include "param.hpp"
 #include <eosevm/version.hpp>
-namespace silkworm::protocol {
 
-TEST_CASE("EIP-2930 intrinsic gas") {
-    std::vector<AccessListEntry> access_list{
-        {0xde0b295669a9fd93d5f28d9ec85e40f4cb697bae_address,
-         {
-             0x0000000000000000000000000000000000000000000000000000000000000003_bytes32,
-             0x0000000000000000000000000000000000000000000000000000000000000007_bytes32,
-         }},
-        {0xbb9bc244d798123fde783fcc1c72d3bb8c189413_address, {}},
-    };
+namespace silkworm {
 
-    UnsignedTransaction txn{
-        .type = TransactionType::kAccessList,
-        .chain_id = 5,
-        .nonce = 7,
-        .max_priority_fee_per_gas = 30000000000,
-        .max_fee_per_gas = 30000000000,
-        .gas_limit = 5748100,
-        .to = 0x811a752c8cd697e3cb27279c330ed1ada745a8d7_address,
-        .value = 2 * kEther,
-        .access_list = access_list};
-
-    intx::uint128 g0{intrinsic_gas(txn, EVMC_ISTANBUL, 0, {})};
-    CHECK(g0 == fee::kGTransaction + 2 * fee::kAccessListAddressCost + 2 * fee::kAccessListStorageKeyCost);
+TEST_CASE("num_words") {
+    CHECK(num_words(0) == 0);
+    CHECK(num_words(1) == 1);
+    CHECK(num_words(31) == 1);
+    CHECK(num_words(32) == 1);
+    CHECK(num_words(33) == 2);
+    CHECK(num_words(0xFFFFFFFFFFFFFFDF) == 0x7FFFFFFFFFFFFFF);
+    CHECK(num_words(0xFFFFFFFFFFFFFFE0) == 0x7FFFFFFFFFFFFFF);
+    CHECK(num_words(0xFFFFFFFFFFFFFFE1) == 0x800000000000000);
+    CHECK(num_words(0xFFFFFFFFFFFFFFFE) == 0x800000000000000);
+    CHECK(num_words(0xFFFFFFFFFFFFFFFF) == 0x800000000000000);
 }
 
-TEST_CASE("G_txcreate intrinsic gas") {
-    uint64_t eos_evm_version = 0;
-    evmone::gas_parameters gas_params;
+namespace protocol {
 
-    UnsignedTransaction txn{};
-    
-    intx::uint128 g0{intrinsic_gas(txn, eosevm::version_to_evmc_revision(eos_evm_version), eos_evm_version, gas_params)};
-    CHECK(g0 == fee::kGTransaction + fee::kGTxCreate);
+    TEST_CASE("EIP-2930 intrinsic gas") {
+        std::vector<AccessListEntry> access_list{
+            {0xde0b295669a9fd93d5f28d9ec85e40f4cb697bae_address,
+             {
+                 0x0000000000000000000000000000000000000000000000000000000000000003_bytes32,
+                 0x0000000000000000000000000000000000000000000000000000000000000007_bytes32,
+             }},
+            {0xbb9bc244d798123fde783fcc1c72d3bb8c189413_address, {}},
+        };
 
-    eos_evm_version = 1;
-    gas_params.G_txcreate = 33333;
-    g0 = intrinsic_gas(txn, eosevm::version_to_evmc_revision(eos_evm_version), eos_evm_version, gas_params);
-    CHECK(g0 == fee::kGTransaction + 33333);
-}
+        UnsignedTransaction txn{
+            .type = TransactionType::kAccessList,
+            .chain_id = kSepoliaConfig.chain_id,
+            .nonce = 7,
+            .max_priority_fee_per_gas = 30000000000,
+            .max_fee_per_gas = 30000000000,
+            .gas_limit = 5748100,
+            .to = 0x811a752c8cd697e3cb27279c330ed1ada745a8d7_address,
+            .value = 2 * kEther,
+            .access_list = access_list};
 
+        uint64_t eos_evm_version = 0;
+        evmone::gas_parameters gas_params;
 
-}  // namespace silkworm::protocol
+        intx::uint128 g0{intrinsic_gas(txn, EVMC_ISTANBUL, eos_evm_version, gas_params)};
+        CHECK(g0 == fee::kGTransaction + 2 * fee::kAccessListAddressCost + 2 * fee::kAccessListStorageKeyCost);
+    }
+
+    TEST_CASE("G_txcreate intrinsic gas") {
+        uint64_t eos_evm_version = 0;
+        evmone::gas_parameters gas_params;
+        UnsignedTransaction txn{};
+        
+        intx::uint128 g0{intrinsic_gas(txn, eosevm::version_to_evmc_revision(eos_evm_version), eos_evm_version, gas_params)};
+        CHECK(g0 == fee::kGTransaction + fee::kGTxCreate);
+        eos_evm_version = 1;
+        gas_params.values_.G_txcreate = 33333;
+        g0 = intrinsic_gas(txn, eosevm::version_to_evmc_revision(eos_evm_version), eos_evm_version, gas_params);
+        CHECK(g0 == fee::kGTransaction + 33333);
+    }
+
+}  // namespace protocol
+
+}  // namespace silkworm

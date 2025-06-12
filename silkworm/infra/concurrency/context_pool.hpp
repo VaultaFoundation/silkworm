@@ -18,6 +18,7 @@
 
 #include <atomic>
 #include <cstddef>
+#include <exception>
 #include <functional>
 #include <memory>
 #include <ostream>
@@ -27,19 +28,18 @@
 
 #include <silkworm/infra/common/log.hpp>
 #include <silkworm/infra/concurrency/context_pool_settings.hpp>
-#include <silkworm/infra/concurrency/idle_strategy.hpp>
+#include <silkworm/infra/concurrency/executor_pool.hpp>
 
 namespace silkworm::concurrency {
 
 //! Asynchronous scheduler running an execution loop.
 class Context {
   public:
-    explicit Context(std::size_t context_id, WaitMode wait_mode = WaitMode::blocking);
+    explicit Context(size_t context_id);
     virtual ~Context() = default;
 
-    [[nodiscard]] boost::asio::io_context* io_context() const noexcept { return io_context_.get(); }
-    [[nodiscard]] WaitMode wait_mode() const noexcept { return wait_mode_; }
-    [[nodiscard]] std::size_t id() const noexcept { return context_id_; }
+    boost::asio::io_context* ioc() const noexcept { return ioc_.get(); }
+    size_t id() const noexcept { return context_id_; }
 
     //! Execute the scheduler loop until stopped.
     virtual void execute_loop();
@@ -49,44 +49,37 @@ class Context {
 
   protected:
     //! The unique scheduler identifier.
-    std::size_t context_id_;
+    size_t context_id_;
 
     //! The asio asynchronous event loop scheduler.
-    std::shared_ptr<boost::asio::io_context> io_context_;
+    std::shared_ptr<boost::asio::io_context> ioc_;
 
     //! The work-tracking executor that keep the asio scheduler running.
     boost::asio::executor_work_guard<boost::asio::io_context::executor_type> work_;
-
-    //! The waiting mode used by execution loops during idle cycles.
-    WaitMode wait_mode_;
-
-  private:
-    //! Execute single-threaded loop until stopped.
-    template <typename IdleStrategy>
-    void execute_loop_single_threaded(IdleStrategy&& idle_strategy);
-
-    //! Execute multi-threaded loop until stopped.
-    void execute_loop_multi_threaded();
 };
 
 std::ostream& operator<<(std::ostream& out, const Context& c);
 
 //! Pool of \ref Context instances running as separate reactive schedulers.
 template <typename T = Context>
-class ContextPool {
+class ContextPool : public ExecutorPool {
+    using ExceptionHandler = std::function<void(std::exception_ptr)>;
+
   public:
-    explicit ContextPool(std::size_t pool_size) : next_index_{0} {
-        if (pool_size == 0) {
-            throw std::logic_error("ContextPool::ContextPool pool_size is 0");
+    explicit ContextPool(uint32_t num_contexts)
+        : ContextPool{ContextPoolSettings{.num_contexts = num_contexts}} {}
+
+    explicit ContextPool(ContextPoolSettings settings) {
+        if (settings.num_contexts == 0) {
+            throw std::logic_error("ContextPool size is 0");
         }
-        contexts_.reserve(pool_size);
-    }
-    explicit ContextPool(ContextPoolSettings settings) : ContextPool(settings.num_contexts) {
+
         for (size_t i{0}; i < settings.num_contexts; ++i) {
-            add_context(T{contexts_.size(), settings.wait_mode});
+            add_context(T{i});
         }
     }
-    virtual ~ContextPool() {
+
+    ~ContextPool() override {
         SILK_TRACE << "ContextPool::~ContextPool START " << this;
         stop();
         join();
@@ -96,28 +89,28 @@ class ContextPool {
     ContextPool(const ContextPool&) = delete;
     ContextPool& operator=(const ContextPool&) = delete;
 
-    //! Add a new \ref T to the pool.
-    const T& add_context(T&& context) {
-        const auto num_contexts = contexts_.size();
-        contexts_.emplace_back(std::move(context));
-        SILK_DEBUG << "ContextPool::add_context context[" << num_contexts << "] " << contexts_[num_contexts];
-        return contexts_[num_contexts];
-    }
-
     //! Start one execution thread for each context.
     virtual void start() {
         SILK_TRACE << "ContextPool::start START";
 
         // Create a pool of threads to run all the contexts (each context having 1 thread)
-        for (std::size_t i{0}; i < contexts_.size(); ++i) {
+        for (size_t i{0}; i < contexts_.size(); ++i) {
             auto& context = contexts_[i];
             context_threads_.create_thread([&, i = i]() {
-                log::set_thread_name(std::string("asio_ctx_s" + std::to_string(i)).c_str());
+                log::set_thread_name(("asio_ctx_s" + std::to_string(i)).c_str());
                 SILK_TRACE << "Thread start context[" << i << "] thread_id: " << std::this_thread::get_id();
-                context.execute_loop();
+                try {
+                    context.execute_loop();
+                } catch (const std::exception& ex) {
+                    SILK_CRIT << "ContextPool context.execute_loop exception: " << ex.what();
+                    exception_handler_(std::make_exception_ptr(ex));
+                } catch (...) {
+                    SILK_CRIT << "ContextPool context.execute_loop unexpected exception";
+                    exception_handler_(std::current_exception());
+                }
                 SILK_TRACE << "Thread end context[" << i << "] thread_id: " << std::this_thread::get_id();
             });
-            SILK_DEBUG << "ContextPool::start context[" << i << "] started: " << context.io_context();
+            SILK_TRACE << "ContextPool::start context[" << i << "] started: " << context.ioc();
         }
 
         SILK_TRACE << "ContextPool::start END";
@@ -129,21 +122,21 @@ class ContextPool {
         SILK_TRACE << "ContextPool::join START";
 
         // Wait for all threads in the pool to exit.
-        SILK_DEBUG << "ContextPool::join joining...";
+        SILK_TRACE << "ContextPool::join joining...";
         context_threads_.join();
 
         SILK_TRACE << "ContextPool::join END";
     }
 
     //! Stop all execution threads. This does *NOT* wait for termination: use \ref join() for that.
-    virtual void stop() {
+    void stop() {
         SILK_TRACE << "ContextPool::stop START";
 
         if (!stopped_.exchange(true)) {
             // Explicitly stop all context runnable components
-            for (std::size_t i{0}; i < contexts_.size(); ++i) {
+            for (size_t i{0}; i < contexts_.size(); ++i) {
                 contexts_[i].stop();
-                SILK_DEBUG << "ContextPool::stop context[" << i << "] stopped: " << contexts_[i].io_context();
+                SILK_TRACE << "ContextPool::stop context[" << i << "] stopped: " << contexts_[i].ioc();
             }
         }
 
@@ -157,7 +150,7 @@ class ContextPool {
         join();
     }
 
-    [[nodiscard]] std::size_t num_contexts() const { return contexts_.size(); }
+    size_t size() const { return contexts_.size(); }
 
     //! Use a round-robin scheme to choose the next context to use
     T& next_context() {
@@ -166,12 +159,39 @@ class ContextPool {
         return contexts_[index];
     }
 
-    boost::asio::io_context& next_io_context() {
+    boost::asio::io_context& next_ioc() {
         const auto& context = next_context();
-        return *context.io_context();
+        return *context.ioc();
+    }
+
+    // ExecutorPool
+    boost::asio::any_io_executor any_executor() override {
+        return this->next_ioc().get_executor();
+    }
+
+    ExecutorPool& as_executor_pool() {
+        return *this;
+    }
+
+    void set_exception_handler(ExceptionHandler exception_handler) {
+        exception_handler_ = std::move(exception_handler);
     }
 
   protected:
+    ContextPool() = default;
+
+    //! Add a new \ref T to the pool.
+    const T& add_context(T&& context) {
+        const auto num_contexts = contexts_.size();
+        contexts_.emplace_back(std::move(context));
+        SILK_TRACE << "ContextPool::add_context context[" << num_contexts << "] " << contexts_[num_contexts];
+        return contexts_[num_contexts];
+    }
+
+    static void termination_handler(std::exception_ptr) {
+        std::terminate();
+    }
+
     //! The pool of execution contexts.
     std::vector<T> contexts_;
 
@@ -179,10 +199,13 @@ class ContextPool {
     boost::asio::detail::thread_group context_threads_;
 
     //! The index for obtaining next context to use (round-robin).
-    std::atomic_size_t next_index_;
+    std::atomic_size_t next_index_{0};
 
     //! Flag indicating if pool has been stopped.
     std::atomic_bool stopped_{false};
+
+    //! Exception handler invoked on execution loop abnormal termination
+    ExceptionHandler exception_handler_{termination_handler};
 };
 
 }  // namespace silkworm::concurrency

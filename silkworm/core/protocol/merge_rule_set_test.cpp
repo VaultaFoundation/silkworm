@@ -16,8 +16,9 @@
 
 #include "merge_rule_set.hpp"
 
-#include <catch2/catch.hpp>
+#include <catch2/catch_test_macros.hpp>
 
+#include <silkworm/core/common/empty_hashes.hpp>
 #include <silkworm/core/state/in_memory_state.hpp>
 
 #include "ethash_rule_set.hpp"
@@ -51,7 +52,7 @@ TEST_CASE("Proof-of-Stake RuleSet") {
 
     MergeRuleSet rule_set{std::make_unique<EthashRuleSet>(config), config};
 
-    header.base_fee_per_gas = expected_base_fee_per_gas(parent.header, EVMC_LONDON);
+    header.base_fee_per_gas = expected_base_fee_per_gas(parent.header);
 
     InMemoryState state;
     state.insert_block(parent, header.parent_hash);

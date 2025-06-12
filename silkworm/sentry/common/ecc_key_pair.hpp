@@ -19,24 +19,25 @@
 #include <string>
 
 #include <silkworm/core/common/base.hpp>
+#include <silkworm/core/common/bytes.hpp>
 
 #include "ecc_public_key.hpp"
 
-namespace silkworm::sentry::common {
+namespace silkworm::sentry {
 
 class EccKeyPair {
   public:
     EccKeyPair();
     explicit EccKeyPair(Bytes private_key_data);
 
-    [[nodiscard]] EccPublicKey public_key() const;
+    EccPublicKey public_key() const;
 
-    [[nodiscard]] ByteView private_key() const { return private_key_; }
+    ByteView private_key() const { return private_key_; }
 
-    [[nodiscard]] std::string private_key_hex() const;
+    std::string private_key_hex() const;
 
   private:
     Bytes private_key_;
 };
 
-}  // namespace silkworm::sentry::common
+}  // namespace silkworm::sentry

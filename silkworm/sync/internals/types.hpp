@@ -19,7 +19,7 @@
 #include <chrono>
 
 #include <silkworm/core/common/assert.hpp>
-#include <silkworm/core/common/cast.hpp>
+#include <silkworm/core/common/bytes_to_string.hpp>
 #include <silkworm/core/common/util.hpp>
 #include <silkworm/core/rlp/decode.hpp>
 #include <silkworm/core/rlp/encode.hpp>
@@ -31,35 +31,15 @@ namespace silkworm {
 
 using BigInt = intx::uint256;  // use intx::to_string, from_string, ...
 
-// using Bytes = std::basic_string<uint8_t>; already defined elsewhere
-// using std::string to_hex(ByteView bytes);
-// using std::optional<Bytes> from_hex(std::string_view hex) noexcept;
-
 using time_point_t = std::chrono::time_point<std::chrono::system_clock>;
 using duration_t = std::chrono::system_clock::duration;
 using seconds_t = std::chrono::seconds;
 using milliseconds_t = std::chrono::milliseconds;
 
-// stream operator <<
-inline std::ostream& operator<<(std::ostream& out, const silkworm::ByteView& bytes) {
-    out << silkworm::to_hex(bytes);
-    return out;
-}
-
-inline std::ostream& operator<<(std::ostream& out, const evmc::address& addr) {
-    out << silkworm::to_hex(addr);
-    return out;
-}
-
-/*inline std::ostream& operator<<(std::ostream& out, const evmc::bytes32& b32) {
-    out << silkworm::to_hex(b32);
-    return out;
-}*/
-
 // Peers
 using PeerId = Bytes;
 
-static inline const PeerId no_peer{byte_ptr_cast("")};
+inline const PeerId kNoPeer{byte_ptr_cast("")};
 
 // Bytes already has operator<<, so PeerId but PeerId is too long
 inline Bytes human_readable_id(const PeerId& peer_id) {
@@ -67,29 +47,26 @@ inline Bytes human_readable_id(const PeerId& peer_id) {
 }
 
 enum Penalty : int {
-    NoPenalty = 0,
-    BadBlockPenalty,
-    DuplicateHeaderPenalty,
-    WrongChildBlockHeightPenalty,
-    WrongChildDifficultyPenalty,
-    InvalidSealPenalty,
-    TooFarFuturePenalty,
-    TooFarPastPenalty,
-    AbandonedAnchorPenalty
+    kNoPenalty = 0,
+    kBadBlockPenalty,
+    kDuplicateHeaderPenalty,
+    kWrongChildBlockHeightPenalty,
+    kWrongChildDifficultyPenalty,
+    kInvalidSealPenalty,
+    kTooFarFuturePenalty,
+    kAbandonedAnchorPenalty
 };
 
 struct PeerPenalization {
     Penalty penalty;
-    PeerId peerId;
-
-    PeerPenalization(Penalty p, PeerId id) : penalty(p), peerId(std::move(id)) {}  // unnecessary with c++20
+    PeerId peer_id;
 };
 
 std::ostream& operator<<(std::ostream& os, const PeerPenalization& penalization);
 
 struct Announce {
     Hash hash;
-    BlockNum number = 0;
+    BlockNum block_num{0};
 };
 
 }  // namespace silkworm

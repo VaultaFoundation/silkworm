@@ -30,24 +30,33 @@ std::vector<PeerPenalization>& OutboundGetBlockBodies::penalties() { return pena
 BlockNum& OutboundGetBlockBodies::min_block() { return min_block_; }
 bool OutboundGetBlockBodies::packet_present() const { return !packet_.request.empty(); }
 
-void OutboundGetBlockBodies::execute(db::ROAccess, HeaderChain&, BodySequence& bs, SentryClient& sentry) {
+void OutboundGetBlockBodies::execute(db::DataStoreRef, HeaderChain&, BodySequence& bs, SentryClient& sentry) {
     if (packet_present()) {
-        auto send_outcome = send_packet(sentry);
+        try {
+            auto send_outcome = send_packet(sentry);
 
-        SILK_TRACE << "Bodies request sent (OutboundGetBlockBodies/" << packet_ << "), min_block " << min_block_
-                   << ", received by " << send_outcome.size() << "/" << sentry.active_peers() << " peer(s)";
+            SILK_TRACE << "Bodies request sent (OutboundGetBlockBodies/" << packet_ << "), min_block " << min_block_
+                       << ", received by " << send_outcome.size() << "/" << sentry.active_peers() << " peer(s)";
 
-        if (send_outcome.empty()) {
+            if (send_outcome.empty()) {
+                bs.request_nack(packet_);
+                ++nack_reqs_;
+            } else {
+                ++sent_reqs_;
+            }
+        } catch (const boost::system::system_error& se) {
+            SILK_TRACE << "OutboundGetBlockBodies failed send_packet error: " << se.what();
             bs.request_nack(packet_);
-            nack_reqs_++;
-        } else {
-            sent_reqs_++;
         }
     }
 
     for (auto& penalization : penalizations_) {
-        SILK_TRACE << "Penalizing " << penalization;
-        sentry.penalize_peer(penalization.peerId, penalization.penalty);
+        try {
+            SILK_TRACE << "Penalizing " << penalization;
+            sentry.penalize_peer(penalization.peer_id, penalization.penalty);
+        } catch (const boost::system::system_error& se) {
+            SILK_TRACE << "OutboundGetBlockBodies failed penalizing " << penalization << " error: " << se.what();
+        }
     }
 }
 
@@ -62,7 +71,7 @@ std::vector<PeerId> OutboundGetBlockBodies::send_packet(SentryClient& sentry) {
 
     auto peers = sentry.send_message_by_min_block(*this, min_block_, 0);
 
-    // SILK_TRACE << "Received sentry result of OutboundGetBlockBodies reqId=" << packet_.requestId << ": "
+    // SILK_TRACE << "Received sentry result of OutboundGetBlockBodies reqId=" << packet_.request_id << ": "
     //            << std::to_string(peers.size()) + " peer(s)";
 
     return peers;

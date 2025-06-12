@@ -1,46 +1,78 @@
 # Silkworm - C++ Ethereum Execution Client
 
-C++ implementation of the Ethereum Execution Layer (EL) protocol based on the [Erigon Thorax architecture].
+C++ implementation of the [Ethereum] Execution Layer (EL) protocol based on the [Erigon architecture].
 
-[![CircleCI](https://circleci.com/gh/torquem-ch/silkworm.svg?style=shield)](https://circleci.com/gh/torquem-ch/silkworm)
-[![macOS](https://github.com/torquem-ch/silkworm/actions/workflows/macOS.yml/badge.svg)](https://github.com/torquem-ch/silkworm/actions/workflows/macOS.yml)
-[![Windows](https://github.com/torquem-ch/silkworm/actions/workflows/windows.yml/badge.svg)](https://github.com/torquem-ch/silkworm/actions/workflows/windows.yml)
-[![CodeCov](https://codecov.io/gh/torquem-ch/silkworm/branch/master/graph/badge.svg)](https://codecov.io/gh/torquem-ch/silkworm)
-[![GitHub](https://img.shields.io/github/license/torquem-ch/silkworm.svg)](https://github.com/torquem-ch/silkworm/blob/master/LICENSE)
-![semver](https://img.shields.io/badge/semver-2.0.0-blue)
+[![Linux](https://img.shields.io/circleci/build/gh/erigontech/silkworm?label=Linux)](https://circleci.com/gh/erigontech/silkworm)
+[![macOS](https://github.com/erigontech/silkworm/actions/workflows/macOS.yml/badge.svg)](https://github.com/erigontech/silkworm/actions/workflows/macOS.yml)
+[![Windows](https://github.com/erigontech/silkworm/actions/workflows/windows.yml/badge.svg)](https://github.com/erigontech/silkworm/actions/workflows/windows.yml)
+[![codecov](https://codecov.io/gh/erigontech/silkworm/graph/badge.svg?token=89IPVJGR4Q)](https://codecov.io/gh/erigontech/silkworm)
+
+[![JSON RPC Integration Tests](https://github.com/erigontech/silkworm/actions/workflows/rpc-integration-tests.yml/badge.svg)](https://github.com/erigontech/silkworm/actions/workflows/rpc-integration-tests.yml)
+[![JSON RPC Performance Tests](https://github.com/erigontech/silkworm/actions/workflows/rpc-performance-tests.yml/badge.svg)](https://github.com/erigontech/silkworm/actions/workflows/rpc-performance-tests.yml)
 
 ## Table of Contents
 
-- [About Silkworm](#about-silkworm)
-- [Obtaining Source Code](#obtaining-source-code)
-- [Building on Linux & macOS](#building-on-linux--macos)
-- [Building on Windows](#building-on-windows)
-- [Codemap](#codemap)
-- [Testing Silkworm](#testing-silkworm)
-- [Style Guide](#style-guide)
+- [About Silkworm](#about)
+- [About Silkworm for Erigon, aka Erigon++](#erigon++)
+- [Obtaining Source Code](#source-code)
+- [Building on Linux & macOS](#build-on-unix)
+- [Building on Windows](#build-on-windows)
+- [Testing Silkworm](#testing)
+- [Contributing](#contributing)
 - [License](#license)
 
 
 <a name="about"></a>
 ## About Silkworm
 
-Silkworm is a greenfield C++ implementation of the Ethereum protocol based on the [Erigon Thorax architecture].
+Silkworm is a greenfield C++ implementation of the Ethereum protocol based on the [Erigon architecture].
 It aims to be the fastest Ethereum client while maintaining the high quality and readability of its source code.
 Silkworm uses [libmdbx] as the database engine.
 
-Silkworm was conceived as an evolution of the [Erigon] project,
-as outlined in its [release commentary](https://ledgerwatch.github.io/turbo_geth_release.html#Licence-and-language-migration-plan-out-of-scope-for-the-release).
+Silkworm was conceived as an evolution of the [Erigon] project, as outlined in its [release commentary](https://ledgerwatch.github.io/turbo_geth_release.html#Licence-and-language-migration-plan-out-of-scope-for-the-release).
 
 Silkworm is under active development and hasn't reached the alpha phase yet.
 Hence, there have been no releases so far.
 
 
-<a name="source"></a>
+<a name="erigon++"></a>
+## About Silkworm for Erigon a.k.a. Erigon++
+
+At the very beginning, one of the main goals of Silkworm was implementing high-performance C++ libraries to be used
+directly within Erigon itself. Recently we focused again on this initial target, making it our highest priority and
+delivering the first release of [Erigon++] starting from Erigon 2.59.0.
+
+Erigon++ is supported on platforms:
+
+* Linux x86_64 with glibc 34+, glibcpp 30+ (such as Debian 12+, Ubuntu 22+, etc.)
+* macOS 14+ arm64
+
+It is not supported on any arm64 Linux, Alpine Linux.
+Test compatibility by running [silkworm_compat_check.sh](https://github.com/erigontech/erigon/blob/main/turbo/silkworm/silkworm_compat_check.sh)
+
+Please note that Erigon++ is just a fancy name for identifying such usage of Silkworm libraries within Erigon, which can
+be selectively enabled by specifying optional flags in Erigon command-line.
+
+There are two possible usages of Erigon++:
+
+* as a user, you may want to test Erigon++ features out of the box: in this case, no Silkworm build is required, you
+just build Erigon as usual and then enable any of the command-line flags:
+```
+--silkworm.exec [enables historical block execution powered by Silkworm]
+--silkworm.rpc [enables Ethereum JSON-RPC API powered by Silkworm]
+--silkworm.sentry [enables Execution Layer p2p networking powered by Silkworm]
+```
+* as a developer, you may want to experiment how you can build Erigon with Silkworm bindings and how you can play with
+them together through [Cgo]. If you are interested, we have some documentation about the development process of our
+[C API for Erigon](https://github.com/erigontech/silkworm/blob/master/docs/CONTRIBUTING.md#c-api-for-erigon).
+
+
+<a name="source-code"></a>
 ## Obtaining Source Code
 
 To obtain Silkworm source code for the first time:
 ```
-git clone --recurse-submodules https://github.com/torquem-ch/silkworm.git
+git clone --recurse-submodules https://github.com/erigontech/silkworm.git
 cd silkworm
 ```
 
@@ -55,24 +87,23 @@ git submodule update --init --recursive
 ```
 
 
-<a name="build_on_unix"></a>
+<a name="build-on-unix"></a>
 ## Building on Linux & macOS
 
 Building Silkworm requires:
-* C++20 compiler: [GCC](https://www.gnu.org/software/gcc/) >= 11.2 or [Clang](https://clang.llvm.org/) >= 13
+* C++20 compiler: [GCC](https://www.gnu.org/software/gcc/) >= 11.2 or [Clang](https://clang.llvm.org/) >= 16
+or AppleClang ([Xcode](https://developer.apple.com/xcode/) >= 15)
 * [CMake](https://cmake.org)
 * [Conan](https://conan.io)
 
 Conan requires Python, and can be installed using:
 
-    pip3 install --user conan==1.58.0 chardet
+    pip3 install --user conan==2.10.2 chardet
 
-and adding its binary to PATH:
+On Linux the conan binary gets installed into `$HOME/.local/bin` which is typically in PATH already.
+On macOS need to add the binary to PATH manually:
 
     export "PATH=$HOME/Library/Python/3.9/bin:$PATH"
-
-* Tools for [gmplib](https://gmplib.org/): `sudo apt-get install -y m4 texinfo bison`
-
 
 Once the prerequisites are installed, bootstrap cmake by running
 ```
@@ -81,6 +112,18 @@ cd build
 cmake ..
 ```
 (In the future you don't have to run `cmake ..` again.)
+
+
+A custom Conan "profile" can be passed via a cmake argument, for example: 
+
+    cmake .. -DCONAN_PROFILE=macos_arm64_clang_13_debug
+
+will use "debug" configuration builds of dependencies.
+
+See available profiles in [cmake/profiles](cmake/profiles).
+
+During the cmake configuration step `conan_provider.cmake` runs a [conan install](https://docs.conan.io/2/reference/commands/install.html) command that downloads packages and builds some of them from source if needed. The exact arguments to this command are printed in the build log.
+
 
 Then run the build itself
 ```
@@ -92,17 +135,17 @@ small amount of RAM. To work around this, either specify `-jn` where `n` is the 
 remove `-j` completely. Typically, for Silkworm each compiler job requires 4GB of RAM. So, if your total RAM is 16GB, for example,
 then `-j4` should be OK, while `-j8` is probably not. It also means that you need a machine with at least 4GB RAM to compile Silkworm._
 
-Now you can run the unit tests. There's one for core and one for node.
+Now you can run the unit tests
 ```
-cmd/test/core_test
-cmd/test/node_test
+make test
 ```
-or [Ethereum EL Tests]
+or the [Ethereum EL Tests]
 ```
 cmd/test/ethereum
 ```
 
-<a name="build_on_windows"></a>
+
+<a name="build-on-windows"></a>
 ## Building on Windows
 
 **Note! Windows builds are maintained for compatibility/portability reasons. However, due to the lack of 128-bit integers support by MSVC, execution performance is inferior when compared to Linux builds.**
@@ -126,40 +169,24 @@ Use the following steps to detect/enable/disable memory compression:
 * To disable memory compression : `Disable-MMAgent -mc` and reboot
 * To enable memory compression : `Enable-MMAgent -mc` and reboot
 
-## Codemap
 
-Apart from the submodules and some auxiliary directories, Silkworm contains the following components:
-* [`cmd`](./cmd)
-  <br /> The source code of Silkworm executable binaries.
-* [`silkworm/core`](./silkworm/core)
-  <br /> This module contains the heart of the Ethereum protocol logic as described by the [Yellow Paper].
-  Source code within `core` is compatible with WebAssembly and cannot use C++ exceptions.
-* [`silkworm/node`](./silkworm/node)
-  <br /> This module contains the database, the [staged sync] and other logic necessary to function as an Ethereum node.
-  This module depends on the `core` module.
-* [`silkworm/sentry`](./silkworm/sentry)
-  <br /> This module implements the networking and protocol stacks for `Sentry` component for an Ethereum node based on [Erigon Thorax architecture].
-  This module depends on both the `core` and `node` modules.
-* [`silkworm/wasm`](./silkworm/wasm)
-  <br /> This module allows the `core` the run on WebAssembly. This module depends on both the `core` and `node` modules.
-
-<a name="testing_silkworm"></a>
+<a name="testing"></a>
 ## Testing Silkworm
 
 **Note: at current state of development Silkworm can't actually sync the chain like Erigon does.**
 
 You can try to run Silkworm to test just the sync on the *pre-Merge* Ethereum chain. In order to do that you need to:
 
-- run an instance of `Erigon Sentry` component from `devel` branch
+- run an instance of `Erigon Sentry` component from branch `release/2.60`
 - set the environment variable `STOP_AT_BLOCK` to a value < 15'537'351 (e.g. STOP_AT_BLOCK=15000000)
 
 ### Linux and macOS
 
 #### Erigon Sentry
 ```
-git clone --recurse-submodules https://github.com/ledgerwatch/erigon.git
+git clone --recurse-submodules https://github.com/erigontech/erigon.git
 cd erigon
-git checkout devel
+git checkout release/2.60
 make sentry
 ./build/bin/sentry
 ```
@@ -174,9 +201,9 @@ export STOP_AT_BLOCK=15000000
 
 #### Erigon Sentry
 ```
-git clone --recurse-submodules https://github.com/ledgerwatch/erigon.git
+git clone --recurse-submodules https://github.com/erigontech/erigon.git
 cd erigon
-git checkout devel
+git checkout release/2.60
 make sentry
 ./build/bin/sentry.exe
 ```
@@ -187,50 +214,30 @@ $env:STOP_AT_BLOCK=15000000
 ./cmd/silkworm.exe
 ```
 
-## Use Conan as Package Manager
 
-A custom Conan "profile" can be passed via a cmake argument, for example: 
+<a name="contributing"></a>
+## Contributing
 
-    cmake .. -DCONAN_PROFILE=macos_arm_clang_13_debug
-
-will use "debug" configuration builds of dependencies.
-
-See available profiles in [cmake/profiles](cmake/profiles).
-
-The conan packages could also be pre-installed using [conan install](https://docs.conan.io/1/reference/commands/consumer/install.html):
-
-    conan install --install-folder=build/conan --build=missing --profile=cmake/profiles/macos_arm_clang_13_debug .
+If you want to contribute, you can read our [contribution guidelines](docs/CONTRIBUTING.md).
 
 
-<a name="guide"></a>
-## Style Guide
-
-We use the standard C++20 programming language.
-We adhere to [Google's C++ Style Guide] with the following differences:
-
-* C++20 rather than C++17.
-* `snake_case()` for function names.
-* .cpp & .hpp file extensions for C++; .c & .h are reserved for C.
-* `using namespace foo` is allowed inside .cpp files, but not inside headers.
-* Exceptions are allowed outside the `core` library.
-* User-defined literals are allowed.
-* Maximum line length is 120, indentation is 4 spaces – see [.clang-format](.clang-format).
-* Use `#pragma once` in the headers instead of the classic `#ifndef` guards.
-
-
+<a name="license"></a>
 ## License
 
 Silkworm is licensed under the terms of the Apache license.
 See [LICENSE](LICENSE) for more information.
 
+Some files in [elias_fano](silkworm/db/datastore/snapshots/elias_fano) and [rec_split](silkworm/db/datastore/snapshots/rec_split) folders are licensed under the LGPL license.
 
-[CMake]: http://cmake.org
+[Ethereum]: https://ethereum.org
 [Ethereum EL Tests]: https://github.com/ethereum/tests
-[Erigon]: https://github.com/ledgerwatch/erigon
-[Erigon Thorax architecture]: https://github.com/ledgerwatch/erigon#key-features
+[Erigon]: https://github.com/erigontech/erigon
+[Erigon architecture]: https://github.com/erigontech/interfaces/blob/master/_docs/README.md
+[Erigon++]: https://erigon.tech/erigonpp
+[Cgo]: https://go.dev/blog/cgo
 [GMP]: http://gmplib.org
-[Google's C++ Style Guide]: https://google.github.io/styleguide/cppguide.html
 [libmdbx]: https://github.com/erthink/libmdbx
-[staged sync]: https://github.com/ledgerwatch/erigon/blob/devel/eth/stagedsync/README.md
+[staged sync]: https://github.com/erigontech/erigon/blob/main/eth/stagedsync/README.md
 [Visual Studio]: https://www.visualstudio.com/downloads
 [Yellow Paper]: https://ethereum.github.io/yellowpaper/paper.pdf
+

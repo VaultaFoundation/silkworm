@@ -24,6 +24,7 @@
 
 #include <silkworm/core/common/assert.hpp>
 #include <silkworm/core/common/base.hpp>
+#include <silkworm/core/common/bytes.hpp>
 #include <silkworm/core/common/util.hpp>
 #include <silkworm/core/rlp/decode.hpp>
 
@@ -41,17 +42,24 @@ class Hash : public evmc::bytes32 {
 
     static constexpr size_t length() { return sizeof(evmc::bytes32); }
 
-    [[nodiscard]] std::string to_hex() const { return silkworm::to_hex(*this); }
+    std::string to_hex() const { return silkworm::to_hex(*this); }
     static std::optional<Hash> from_hex(const std::string& hex) { return evmc::from_hex<Hash>(hex); }
 
-    // conversion to ByteView is handled in ByteView class,
-    // conversion operator Byte() { return {bytes, length()}; } is handled elsewhere
+    // conversion to ByteView
+    // NOLINTNEXTLINE(google-explicit-constructor, hicpp-explicit-conversions)
+    operator ByteView() const { return ByteView{bytes}; }
 
     static_assert(sizeof(evmc::bytes32) == 32);
 };
 
 using HashAsSpan = std::span<const uint8_t, kHashLength>;
 using HashAsArray = const uint8_t (&)[kHashLength];
+
+namespace rlp {
+    inline DecodingResult decode(ByteView& from, Hash& to, Leftover mode = Leftover::kProhibit) {
+        return decode(from, to.bytes, mode);
+    }
+}  // namespace rlp
 
 }  // namespace silkworm
 

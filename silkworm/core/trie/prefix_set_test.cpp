@@ -16,21 +16,18 @@
 
 #include "prefix_set.hpp"
 
-#include <catch2/catch.hpp>
+#include <catch2/catch_test_macros.hpp>
 
-#include <silkworm/core/common/cast.hpp>
+#include <silkworm/core/common/bytes_to_string.hpp>
 #include <silkworm/core/common/util.hpp>
 
 namespace silkworm::trie {
 
 TEST_CASE("Prefix set - no prefix") {
     PrefixSet ps;
-    REQUIRE(ps.size() == 0);
     REQUIRE(ps.empty());
     CHECK(!ps.contains(string_view_to_byte_view("")));
     CHECK(!ps.contains(string_view_to_byte_view("a")));
-
-    Bytes prefix{};
 
     ps.insert(string_view_to_byte_view("abc"));
     ps.insert(string_view_to_byte_view("fg"));

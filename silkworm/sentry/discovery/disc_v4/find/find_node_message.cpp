@@ -20,11 +20,9 @@
 #include <silkworm/core/rlp/encode_vector.hpp>
 #include <silkworm/infra/common/decoding_exception.hpp>
 #include <silkworm/infra/common/unix_timestamp.hpp>
-#include <silkworm/sentry/discovery/disc_v4/disc_v4_common/packet_type.hpp>
+#include <silkworm/sentry/discovery/disc_v4/common/packet_type.hpp>
 
 namespace silkworm::sentry::discovery::disc_v4::find {
-
-using namespace disc_v4_common;
 
 const uint8_t FindNodeMessage::kId = static_cast<uint8_t>(PacketType::kFindNode);
 
@@ -37,7 +35,7 @@ Bytes FindNodeMessage::rlp_encode() const {
 
 FindNodeMessage FindNodeMessage::rlp_decode(ByteView data) {
     Bytes target_public_key_data;
-    uint64_t expiration_ts;
+    uint64_t expiration_ts{0};
 
     auto result = rlp::decode(
         data,
@@ -48,8 +46,16 @@ FindNodeMessage FindNodeMessage::rlp_decode(ByteView data) {
         throw DecodingException(result.error(), "Failed to decode FindNodeMessage RLP");
     }
 
+    auto target_public_key = [&target_public_key_data]() -> EccPublicKey {
+        try {
+            return EccPublicKey::deserialize(target_public_key_data);
+        } catch (const std::runtime_error& ex) {
+            throw DecodeTargetPublicKeyError(ex);
+        }
+    }();
+
     return FindNodeMessage{
-        common::EccPublicKey::deserialize(target_public_key_data),
+        std::move(target_public_key),
         time_point_from_unix_timestamp(expiration_ts),
     };
 }

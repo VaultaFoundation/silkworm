@@ -16,13 +16,14 @@
 
 #include "util.hpp"
 
+#include <algorithm>
 #include <cstdio>
 
 #if not defined(ANTELOPE)
 #include <regex>
 #endif
 
-#include <silkworm/core/common/as_range.hpp>
+#include <silkworm/core/common/assert.hpp>
 
 namespace silkworm {
 
@@ -60,31 +61,14 @@ static constexpr uint8_t kUnhexTable4[256] = {
     0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
     0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
 
-evmc::address to_evmc_address(ByteView bytes) {
-    evmc::address out;
-    if (!bytes.empty()) {
-        size_t n{std::min(bytes.length(), kAddressLength)};
-        std::memcpy(out.bytes + kAddressLength - n, bytes.data(), n);
-    }
-    return out;
-}
-
-evmc::bytes32 to_bytes32(ByteView bytes) {
-    evmc::bytes32 out;
-    if (!bytes.empty()) {
-        size_t n{std::min(bytes.length(), kHashLength)};
-        std::memcpy(out.bytes + kHashLength - n, bytes.data(), n);
-    }
-    return out;
-}
-
 ByteView zeroless_view(ByteView data) {
-    return data.substr(static_cast<size_t>(
-        std::distance(data.begin(), as_range::find_if_not(data, [](const auto& b) { return b == 0x0; }))));
+    const auto is_zero_byte = [](const auto& b) { return b == 0x0; };
+    const auto first_nonzero_byte_it{std::ranges::find_if_not(data, is_zero_byte)};
+    return data.substr(static_cast<size_t>(std::distance(data.begin(), first_nonzero_byte_it)));
 }
 
 std::string to_hex(ByteView bytes, bool with_prefix) {
-    static const char* kHexDigits{"0123456789abcdef"};
+    static constexpr const char* kHexDigits{"0123456789abcdef"};
     std::string out(bytes.length() * 2 + (with_prefix ? 2 : 0), '\0');
     char* dest{&out[0]};
     if (with_prefix) {
@@ -105,8 +89,8 @@ std::string abridge(std::string_view input, size_t length) {
     return std::string(input.substr(0, length)) + "...";
 }
 
-static inline uint8_t unhex_lut(uint8_t x) { return kUnhexTable[x]; }
-static inline uint8_t unhex_lut4(uint8_t x) { return kUnhexTable4[x]; }
+static uint8_t unhex_lut(uint8_t x) { return kUnhexTable[x]; }
+static uint8_t unhex_lut4(uint8_t x) { return kUnhexTable4[x]; }
 
 std::optional<uint8_t> decode_hex_digit(char ch) noexcept {
     auto ret{unhex_lut(static_cast<uint8_t>(ch))};
@@ -126,7 +110,7 @@ std::optional<Bytes> from_hex(std::string_view hex) noexcept {
 
     size_t pos(hex.length() & 1);  // "[0x]1" is legit and has to be treated as "[0x]01"
     Bytes out((hex.length() + pos) / 2, '\0');
-    const char* src{const_cast<char*>(hex.data())};
+    const char* src{hex.data()};
     const char* last = src + hex.length();
     uint8_t* dst{&out[0]};
 
@@ -181,9 +165,9 @@ std::optional<uint64_t> parse_size(const std::string& sizestr) {
         return 0ull;
     }
 
-    static const std::regex pattern{R"(^(\d*)(\.\d{1,3})?\ *?(B|KB|MB|GB|TB)?$)", std::regex_constants::icase};
+    static const std::regex kPattern{R"(^(\d*)(\.\d{1,3})?\ *?(B|KB|MB|GB|TB)?$)", std::regex_constants::icase};
     std::smatch matches;
-    if (!std::regex_search(sizestr, matches, pattern, std::regex_constants::match_default)) {
+    if (!std::regex_search(sizestr, matches, kPattern, std::regex_constants::match_default)) {
         return std::nullopt;
     }
 
@@ -221,20 +205,19 @@ std::optional<uint64_t> parse_size(const std::string& sizestr) {
 }
 #endif
 
-std::string human_size(uint64_t bytes) {
-    static const char* suffix[]{"B", "KB", "MB", "GB", "TB"};
-    static const uint32_t items{sizeof(suffix) / sizeof(suffix[0])};
+std::string human_size(uint64_t bytes, const char* unit) {
+    static const char* suffix[]{"", "K", "M", "G", "T"};
     uint32_t index{0};
     double value{static_cast<double>(bytes)};
     while (value >= kKibi) {
         value /= kKibi;
-        if (++index == (items - 1)) {
+        if (++index == (std::size(suffix) - 1)) {
             break;
         }
     }
     static constexpr size_t kBufferSize{64};
     SILKWORM_THREAD_LOCAL char output[kBufferSize];
-    std::snprintf(output, kBufferSize, "%.02lf %s", value, suffix[index]);
+    SILKWORM_ASSERT(std::snprintf(output, kBufferSize, "%.02lf %s%s", value, suffix[index], unit) > 0);
     return output;
 }
 
@@ -249,13 +232,26 @@ size_t prefix_length(ByteView a, ByteView b) {
 }
 
 float to_float(const intx::uint256& n) noexcept {
-    static constexpr float k2_64{18446744073709551616.};  // 2^64
+    static constexpr float k2to64{18446744073709551616.};  // 2^64
     const uint64_t* words{intx::as_words(n)};
     auto res{static_cast<float>(words[3])};
-    res = k2_64 * res + static_cast<float>(words[2]);
-    res = k2_64 * res + static_cast<float>(words[1]);
-    res = k2_64 * res + static_cast<float>(words[0]);
+    res = k2to64 * res + static_cast<float>(words[2]);
+    res = k2to64 * res + static_cast<float>(words[1]);
+    res = k2to64 * res + static_cast<float>(words[0]);
     return res;
+}
+
+std::string snake_to_camel(std::string_view snake) {
+    std::string camel;
+    camel += static_cast<char>(std::toupper(static_cast<unsigned char>(snake[0])));
+    for (size_t i = 1; i < snake.length(); ++i) {
+        if (snake[i] == '_' && (i + 1) < snake.length()) {
+            camel += static_cast<char>(std::toupper(static_cast<unsigned char>(snake[++i])));
+        } else {
+            camel += snake[i];
+        }
+    }
+    return camel;
 }
 
 }  // namespace silkworm

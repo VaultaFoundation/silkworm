@@ -23,35 +23,34 @@
 #include <silkworm/core/rlp/encode_vector.hpp>
 #include <silkworm/infra/common/decoding_exception.hpp>
 #include <silkworm/sentry/common/crypto/ecdsa_signature.hpp>
+#include <silkworm/sentry/common/crypto/xor.hpp>
 #include <silkworm/sentry/common/random.hpp>
-#include <silkworm/sentry/rlpx/crypto/xor.hpp>
 
+#include "auth_message_error.hpp"
 #include "ecies_cipher.hpp"
 
 namespace silkworm::sentry::rlpx::auth {
 
-using namespace common::crypto::ecdsa_signature;
-
-const uint8_t AuthMessage::version = 4;
+using namespace silkworm::sentry::crypto::ecdsa_signature;
 
 AuthMessage::AuthMessage(
-    const common::EccKeyPair& initiator_key_pair,
-    common::EccPublicKey recipient_public_key,
-    const common::EccKeyPair& ephemeral_key_pair)
+    const EccKeyPair& initiator_key_pair,
+    EccPublicKey recipient_public_key,
+    const EccKeyPair& ephemeral_key_pair)
     : initiator_public_key_(initiator_key_pair.public_key()),
       recipient_public_key_(std::move(recipient_public_key)),
       ephemeral_public_key_(ephemeral_key_pair.public_key()) {
     Bytes shared_secret = EciesCipher::compute_shared_secret(recipient_public_key_, initiator_key_pair.private_key());
 
-    nonce_ = common::random_bytes(shared_secret.size());
+    nonce_ = random_bytes(shared_secret.size());
 
     // shared_secret ^= nonce_
     crypto::xor_bytes(shared_secret, nonce_);
 
-    signature_ = sign(shared_secret, ephemeral_key_pair.private_key());
+    signature_ = sign_recoverable(shared_secret, ephemeral_key_pair.private_key());
 }
 
-AuthMessage::AuthMessage(ByteView data, const common::EccKeyPair& recipient_key_pair)
+AuthMessage::AuthMessage(ByteView data, const EccKeyPair& recipient_key_pair)
     : initiator_public_key_(Bytes{}),
       recipient_public_key_(recipient_key_pair.public_key()),
       ephemeral_public_key_(Bytes{}) {
@@ -66,12 +65,12 @@ AuthMessage::AuthMessage(ByteView data, const common::EccKeyPair& recipient_key_
     // shared_secret ^= nonce_
     crypto::xor_bytes(shared_secret, nonce_);
 
-    ephemeral_public_key_ = recover_and_verify(shared_secret, signature_);
+    ephemeral_public_key_ = verify_and_recover(shared_secret, signature_);
 }
 
 Bytes AuthMessage::body_as_rlp() const {
     Bytes data;
-    rlp::encode(data, signature_, initiator_public_key_.serialized(), nonce_, version);
+    rlp::encode(data, signature_, initiator_public_key_.serialized(), nonce_, kVersion);
     return data;
 }
 
@@ -79,9 +78,9 @@ void AuthMessage::init_from_rlp(ByteView data) {
     Bytes public_key_data;
     auto result = rlp::decode(data, rlp::Leftover::kAllow, signature_, public_key_data, nonce_);
     if (!result && (result.error() != DecodingError::kUnexpectedListElements)) {
-        throw DecodingException(result.error(), "Failed to decode AuthMessage RLP");
+        throw AuthMessageErrorBadRLP(AuthMessageType::kAuth, result.error());
     }
-    initiator_public_key_ = common::EccPublicKey::deserialize(public_key_data);
+    initiator_public_key_ = EccPublicKey::deserialize(public_key_data);
 }
 
 Bytes AuthMessage::serialize_size(size_t body_size) {
@@ -92,7 +91,11 @@ Bytes AuthMessage::serialize_size(size_t body_size) {
 
 Bytes AuthMessage::decrypt_body(ByteView data, ByteView recipient_private_key) {
     Bytes size = serialize_size(data.size());
-    return EciesCipher::decrypt(data, recipient_private_key, size);
+    try {
+        return EciesCipher::decrypt(data, recipient_private_key, size);
+    } catch (const EciesCipherError& ex) {
+        throw AuthMessageErrorDecryptFailure(AuthMessageType::kAuth, Bytes{data}, ex);
+    }
 }
 
 Bytes AuthMessage::serialize() const {

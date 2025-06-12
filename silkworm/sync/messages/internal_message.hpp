@@ -17,6 +17,7 @@
 #pragma once
 
 #include <future>
+#include <utility>
 
 #include <silkworm/sync/internals/header_chain.hpp>
 
@@ -29,11 +30,11 @@ class InternalMessage : public Message {
   public:
     using ExecutionFunc = std::function<R(HeaderChain&, BodySequence&)>;
 
-    InternalMessage(ExecutionFunc);
+    explicit InternalMessage(ExecutionFunc);
 
     std::string name() const override { return "InternalMessage"; }
 
-    void execute(db::ROAccess, HeaderChain&, BodySequence&, SentryClient&) override;
+    void execute(db::DataStoreRef, HeaderChain&, BodySequence&, SentryClient&) override;
 
     std::future<R>& result() { return result_out_; }
 
@@ -41,25 +42,22 @@ class InternalMessage : public Message {
 
   private:
     ExecutionFunc execution_impl_;
-    std::promise<R> result_in_;
-    std::future<R> result_out_;
+    std::promise<R> result_in_{};
+    std::future<R> result_out_{result_in_.get_future()};
 };
 
 template <class R>
-InternalMessage<R>::InternalMessage(ExecutionFunc exec)
-    : execution_impl_{exec}, result_in_{}, result_out_{result_in_.get_future()} {}
+InternalMessage<R>::InternalMessage(ExecutionFunc exec) : execution_impl_{std::move(exec)} {}
 
 template <class R>
-void InternalMessage<R>::execute(db::ROAccess, HeaderChain& hc, BodySequence& bs, SentryClient&) {
+void InternalMessage<R>::execute(db::DataStoreRef, HeaderChain& hc, BodySequence& bs, SentryClient&) {
     R local_result = execution_impl_(hc, bs);
-
     result_in_.set_value(local_result);
 }
 
 template <>
-inline void InternalMessage<void>::execute(db::ROAccess, HeaderChain& hc, BodySequence& bs, SentryClient&) {
+inline void InternalMessage<void>::execute(db::DataStoreRef, HeaderChain& hc, BodySequence& bs, SentryClient&) {
     execution_impl_(hc, bs);
-
     result_in_.set_value();
 }
 

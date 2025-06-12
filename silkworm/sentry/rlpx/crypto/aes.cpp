@@ -26,14 +26,14 @@
 
 namespace silkworm::sentry::rlpx::crypto {
 
-static const size_t kKeySize128 = 16;
-static const size_t kKeySize256 = 32;
-extern const size_t kAESBlockSize = AES_BLOCK_SIZE;
+static constexpr size_t kKeySize128 = 16;
+static constexpr size_t kKeySize256 = 32;
+extern constexpr size_t kAESBlockSize = AES_BLOCK_SIZE;
 
 AESCipher::AESCipher(ByteView key, std::optional<ByteView> iv, Direction direction) {
-    assert(!iv || (iv->size() == kAESBlockSize));
+    SILKWORM_ASSERT(!iv || (iv->size() == kAESBlockSize));
 
-    const EVP_CIPHER* mode;
+    const EVP_CIPHER* mode{nullptr};
     switch (key.size()) {
         case kKeySize128:
             mode = iv ? EVP_aes_128_ctr() : EVP_aes_128_ecb();
@@ -116,7 +116,7 @@ Bytes aes_decrypt(ByteView cipher_text, ByteView key, ByteView iv) {
 }
 
 Bytes aes_make_iv() {
-    return common::random_bytes(AES_BLOCK_SIZE);
+    return random_bytes(AES_BLOCK_SIZE);
 }
 
 size_t aes_round_up_to_block_size(size_t size) {

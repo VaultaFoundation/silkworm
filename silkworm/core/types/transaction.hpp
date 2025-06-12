@@ -21,7 +21,10 @@
 
 #include <intx/intx.hpp>
 
+#include <silkworm/core/chain/config.hpp>
 #include <silkworm/core/common/base.hpp>
+#include <silkworm/core/common/bytes.hpp>
+#include <silkworm/core/concurrency/resettable_once_flag.hpp>
 #include <silkworm/core/rlp/decode.hpp>
 #include <silkworm/core/types/hash.hpp>
 
@@ -32,7 +35,19 @@ struct AccessListEntry {
     evmc::address account{};
     std::vector<evmc::bytes32> storage_keys{};
 
-    friend bool operator==(const AccessListEntry&, const AccessListEntry&);
+    friend bool operator==(const AccessListEntry&, const AccessListEntry&) = default;
+};
+
+// EIP-7702 Authorization
+struct Authorization {
+    intx::uint256 chain_id;
+    evmc::address address;
+    uint64_t nonce{};
+    intx::uint256 v;
+    intx::uint256 r;
+    intx::uint256 s;
+
+    friend bool operator==(const Authorization&, const Authorization&) = default;
 };
 
 // EIP-2718 transaction type
@@ -42,6 +57,11 @@ enum class TransactionType : uint8_t {
     kAccessList = 1,  // EIP-2930
     kDynamicFee = 2,  // EIP-1559
     kBlob = 3,        // EIP-4844
+    kSetCode = 4,     // EIP-7702
+
+    // System transactions are used for internal protocol operations like storing parent beacon root (EIP-4788).
+    // They do not pay the base fee.
+    kSystem = 0xff,
 };
 
 struct UnsignedTransaction {
@@ -60,47 +80,64 @@ struct UnsignedTransaction {
     std::vector<AccessListEntry> access_list{};  // EIP-2930
 
     // EIP-4844: Shard Blob Transactions
-    intx::uint256 max_fee_per_data_gas{0};
+    intx::uint256 max_fee_per_blob_gas{0};
     std::vector<Hash> blob_versioned_hashes{};
 
+    // EIP-7702
+    std::vector<Authorization> authorizations;
+
     //! \brief Maximum possible cost of normal and data (EIP-4844) gas
-    [[nodiscard]] intx::uint512 maximum_gas_cost() const;
+    intx::uint512 maximum_gas_cost() const;
 
-    [[nodiscard]] intx::uint256 priority_fee_per_gas(const intx::uint256& base_fee_per_gas) const;  // EIP-1559
-    [[nodiscard]] intx::uint256 effective_gas_price(const intx::uint256& base_fee_per_gas) const;   // EIP-1559
+    intx::uint256 priority_fee_per_gas(const intx::uint256& base_fee_per_gas) const;  // EIP-1559
+    intx::uint256 effective_gas_price(const intx::uint256& base_fee_per_gas) const;   // EIP-1559
 
-    [[nodiscard]] uint64_t total_data_gas() const;  // EIP-4844
+    uint64_t total_blob_gas() const;  // EIP-4844
 
     void encode_for_signing(Bytes& into) const;
 
-    friend bool operator==(const UnsignedTransaction&, const UnsignedTransaction&);
+    friend bool operator==(const UnsignedTransaction&, const UnsignedTransaction&) = default;
 };
 
-struct Transaction : public UnsignedTransaction {
+class Transaction : public UnsignedTransaction {
+  public:
     bool odd_y_parity{false};
     intx::uint256 r{0}, s{0};  // signature
 
-    // sender recovered from the signature
-    std::optional<evmc::address> from{std::nullopt};
-
-    [[nodiscard]] intx::uint256 v() const;  // EIP-155
+    intx::uint256 v() const;  // EIP-155
 
     //! \brief Returns false if v is not acceptable (v != 27 && v != 28 && v < 35, see EIP-155)
-    [[nodiscard]] bool set_v(const intx::uint256& v);
+    bool set_v(const intx::uint256& v);
 
-    //! \brief Populates the from field with recovered sender.
+    //! \brief Sender recovered from the signature.
     //! \see Yellow Paper, Appendix F "Signing Transactions",
-    //! https://eips.ethereum.org/EIPS/eip-2 and
-    //! https://eips.ethereum.org/EIPS/eip-155.
-    //! If recovery fails the from field is set to null.
-    void recover_sender();
+    //! EIP-2: Homestead Hard-fork Changes and
+    //! EIP-155: Simple replay attack protection.
+    //! If recovery fails std::nullopt is returned.
+    std::optional<evmc::address> sender() const;
 
-    [[nodiscard]] evmc::bytes32 hash() const;
+    void set_sender(const evmc::address& sender);
+
+    evmc::bytes32 hash() const;
+
+    //! Reset the computed values
+    void reset();
+
+  private:
+    mutable std::optional<evmc::address> sender_{std::nullopt};
+    mutable ResettableOnceFlag sender_recovered_;
+
+    // cached value for hash if already computed
+    mutable evmc::bytes32 cached_hash_;
+    mutable ResettableOnceFlag hash_computed_;
 };
 
 namespace rlp {
     void encode(Bytes& to, const AccessListEntry&);
     size_t length(const AccessListEntry&);
+
+    void encode(Bytes& to, const Authorization&);
+    size_t length(const Authorization&);
 
     // According to EIP-2718, serialized transactions are prepended with 1 byte containing the type
     // (0x02 for EIP-1559 transactions); the same goes for receipts. This is true for signing and

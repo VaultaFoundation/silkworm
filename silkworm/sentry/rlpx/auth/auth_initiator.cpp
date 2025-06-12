@@ -17,6 +17,7 @@
 #include "auth_initiator.hpp"
 
 #include <silkworm/core/common/base.hpp>
+#include <silkworm/core/common/bytes.hpp>
 #include <silkworm/infra/concurrency/awaitable_wait_for_one.hpp>
 #include <silkworm/infra/concurrency/timeout.hpp>
 
@@ -28,7 +29,7 @@ namespace silkworm::sentry::rlpx::auth {
 using namespace std::chrono_literals;
 using namespace concurrency::awaitable_wait_for_one;
 
-Task<AuthKeys> AuthInitiator::execute(common::SocketStream& stream) {
+Task<AuthKeys> AuthInitiator::execute(SocketStream& stream) {
     AuthMessage auth_message{initiator_key_pair_, recipient_public_key_, initiator_ephemeral_key_pair_};
     Bytes auth_data = auth_message.serialize();
     co_await (stream.send(auth_data) || concurrency::timeout(5s));

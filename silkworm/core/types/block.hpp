@@ -24,32 +24,19 @@
 #include <ethash/hash_types.hpp>
 #include <intx/intx.hpp>
 
-//#include <silkworm/core/chain/config.hpp>
 #include <silkworm/core/common/util.hpp>
 #include <silkworm/core/rlp/decode.hpp>
 #include <silkworm/core/types/bloom.hpp>
 #include <silkworm/core/types/hash.hpp>
 #include <silkworm/core/types/transaction.hpp>
 #include <silkworm/core/types/withdrawal.hpp>
-
 #include <eosevm/block_extra_data.hpp>
 
 namespace silkworm {
 
 using TotalDifficulty = intx::uint256;
 
-struct BlockId {
-    BlockNum number{};
-    Hash hash;
-};
-
-BlockNum height(const BlockId& b);
-
-struct ChainHead {
-    BlockNum height{};
-    Hash hash;
-    TotalDifficulty total_difficulty{};
-};
+intx::uint256 calc_blob_gas_price(uint64_t excess_blob_gas);
 
 struct BlockHeader {
     using NonceType = std::array<uint8_t, 8>;
@@ -69,26 +56,33 @@ struct BlockHeader {
 
     Bytes extra_data{};
 
-    evmc::bytes32 prev_randao{};  // mix hash prior to EIP-4399
+    evmc::bytes32 prev_randao{};  // mix hash (digest) prior to EIP-4399
     NonceType nonce{};
 
+    // Added in London
     std::optional<intx::uint256> base_fee_per_gas{std::nullopt};  // EIP-1559
+
+    // Added in Shanghai
     std::optional<evmc::bytes32> withdrawals_root{std::nullopt};  // EIP-4895
 
-    // EIP-4844: Shard Blob Transactions
-    std::optional<uint64_t> data_gas_used{std::nullopt};
-    std::optional<uint64_t> excess_data_gas{std::nullopt};
+    // Added in Cancun
+    std::optional<uint64_t> blob_gas_used{std::nullopt};                  // EIP-4844
+    std::optional<uint64_t> excess_blob_gas{std::nullopt};                // EIP-4844
+    std::optional<evmc::bytes32> parent_beacon_block_root{std::nullopt};  // EIP-4788
 
-    [[nodiscard]] evmc::bytes32 hash(bool for_sealing = false, bool exclude_extra_data_sig = false) const;
+    // Added in Prague
+    std::optional<evmc::bytes32> requests_hash{std::nullopt};  // EIP-7685
+
+    evmc::bytes32 hash(bool for_sealing = false, bool exclude_extra_data_sig = false) const;
 
     //! \brief Calculates header's boundary. This is described by Equation(50) by the Yellow Paper.
     //! \return A hash of 256 bits with big endian byte order
-    [[nodiscard]] ethash::hash256 boundary() const;
+    ethash::hash256 boundary() const;
 
     //! \see https://eips.ethereum.org/EIPS/eip-4844#gas-accounting
-    [[nodiscard]] std::optional<intx::uint256> data_gas_price() const;
+    std::optional<intx::uint256> blob_gas_price() const;
 
-    friend bool operator==(const BlockHeader&, const BlockHeader&);
+    friend bool operator==(const BlockHeader&, const BlockHeader&) = default;
 };
 
 struct BlockBody {
@@ -127,16 +121,18 @@ struct BlockBody {
         return eosevm_extra_data.value().gasprices;
     }
 
-    friend bool operator==(const BlockBody&, const BlockBody&);
+    friend bool operator==(const BlockBody&, const BlockBody&) = default;
 };
 
 struct Block : public BlockBody {
     BlockHeader header;
 
+    BlockBody copy_body() const {
+        return *this;  // NOLINT(cppcoreguidelines-slicing)
+    }
+
     // EOS-EVM
     bool irreversible{false};
-
-    void recover_senders();
 };
 
 struct BlockWithHash {
@@ -157,26 +153,5 @@ namespace rlp {
     DecodingResult decode(ByteView& from, BlockHeader& to, Leftover mode = Leftover::kProhibit) noexcept;
     DecodingResult decode(ByteView& from, Block& to, Leftover mode = Leftover::kProhibit) noexcept;
 }  // namespace rlp
-
-// Comparison operator ==
-inline bool operator==(const BlockId& a, const BlockId& b) {
-    return a.number == b.number && a.hash == b.hash;
-}
-
-inline bool operator==(const ChainHead& a, const BlockId& b) {
-    return a.height == b.number && a.hash == b.hash;
-}
-
-inline bool operator==(const BlockId& a, const ChainHead& b) {
-    return a.number == b.height && a.hash == b.hash;
-}
-
-inline bool operator==(const ChainHead& a, const ChainHead& b) {
-    return a.height == b.height && a.hash == b.hash && a.total_difficulty == b.total_difficulty;
-}
-
-inline BlockId to_BlockId(const ChainHead& head) {
-    return {.number = head.height, .hash = head.hash};
-}
 
 }  // namespace silkworm

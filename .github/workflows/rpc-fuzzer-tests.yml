@@ -1,0 +1,76 @@
+name: QA - RPC Fuzzer Tests
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 0 * * 0'  # Runs every Sunday at 00:00 AM UTC
+  
+jobs:
+  fuzzer-test-address-sanitizer:
+    runs-on: [ self-hosted, Erigon2 ] # must run on E2 not to steal E3 runner, which is used for PR approval
+    timeout-minutes: 1440
+    env:
+      RPC_PAST_TEST_DIR: /opt/rpc-past-tests
+      ERIGON_QA_PATH: /opt/erigon-qa
+    steps:
+      - name: Checkout Silkworm Repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: "1" # Fetch only the last commit, not the entire history
+      - uses: ./.github/actions/fuzzer-common-steps
+        timeout-minutes: 1440
+        with:
+          fuzzer_sanitizers: address,leak
+
+  fuzzer-test-no-sanitizer:
+    needs: fuzzer-test-thread-sanitizer
+    runs-on: [ self-hosted, Erigon2 ] # must run on E2 not to steal E3 runner, which is used for PR approval
+    timeout-minutes: 1440
+    env:
+      RPC_PAST_TEST_DIR: /opt/rpc-past-tests
+      ERIGON_QA_PATH: /opt/erigon-qa
+    steps:
+      - name: Checkout Silkworm Repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: "1" # Fetch only the last commit, not the entire history
+      - uses: ./.github/actions/fuzzer-common-steps
+        timeout-minutes: 1440
+
+  fuzzer-test-memory-sanitizer:
+    needs: fuzzer-test-no-sanitizer
+    runs-on: [ self-hosted, Erigon2 ] # must run on E2 not to steal E3 runner, which is used for PR approval
+    timeout-minutes: 1440
+    env:
+      RPC_PAST_TEST_DIR: /opt/rpc-past-tests
+      ERIGON_QA_PATH: /opt/erigon-qa
+    steps:
+      - name: Checkout Silkworm Repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: "1" # Fetch only the last commit, not the entire history
+      - uses: ./.github/actions/fuzzer-common-steps
+        timeout-minutes: 1440
+        with:
+          fuzzer_sanitizers: memory
+
+  fuzzer-test-thread-sanitizer:
+    needs: fuzzer-test-address-sanitizer
+    runs-on: [ self-hosted, Erigon2 ] # must run on E2 not to steal E3 runner, which is used for PR approval
+    timeout-minutes: 1440
+    env:
+      RPC_PAST_TEST_DIR: /opt/rpc-past-tests
+      ERIGON_QA_PATH: /opt/erigon-qa
+    steps:
+      - name: Checkout Silkworm Repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: "1" # Fetch only the last commit, not the entire history
+      - uses: ./.github/actions/fuzzer-common-steps
+        timeout-minutes: 1440
+        with:
+          fuzzer_sanitizers: thread,undefined

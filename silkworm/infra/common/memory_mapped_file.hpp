@@ -46,8 +46,11 @@
 #include <cstdio>
 #include <filesystem>
 #include <istream>
+#include <optional>
+#include <span>
 #include <streambuf>
 #include <tuple>
+#include <utility>
 
 #ifndef _WIN32
 #include <fcntl.h>
@@ -68,68 +71,92 @@ using FileDescriptor = HANDLE;
 using FileDescriptor = int;
 #endif
 
+using MemoryMappedRegion = std::span<uint8_t>;
+
 class MemoryMappedFile {
   public:
-    explicit MemoryMappedFile(std::filesystem::path path, bool read_only = true);
+    explicit MemoryMappedFile(std::filesystem::path path, std::optional<MemoryMappedRegion> region = {}, bool read_only = true);
     ~MemoryMappedFile();
 
-    [[nodiscard]] std::filesystem::path path() const {
+    // Not copyable
+    MemoryMappedFile(const MemoryMappedFile&) = delete;
+    MemoryMappedFile& operator=(const MemoryMappedFile&) = delete;
+
+    // Only movable
+    MemoryMappedFile(MemoryMappedFile&& other) noexcept
+        : path_{std::move(other.path_)},
+          region_{std::exchange(other.region_, {})},
+#ifdef _WIN32
+          file_{std::exchange(other.file_, nullptr)},
+          mapping_{std::exchange(other.mapping_, nullptr)},
+#endif
+          managed_{std::exchange(other.managed_, false)} {
+    }
+
+    MemoryMappedFile& operator=(MemoryMappedFile&& other) noexcept {
+        path_ = std::move(other.path_);
+        region_ = std::exchange(other.region_, {});
+#ifdef _WIN32
+        file_ = std::exchange(other.file_, nullptr);
+        mapping_ = std::exchange(other.mapping_, nullptr);
+#endif
+        managed_ = std::exchange(other.managed_, false);
+        return *this;
+    }
+
+    std::filesystem::path path() const {
         return path_;
     }
 
-    [[nodiscard]] uint8_t* address() const {
-        return address_;
+    MemoryMappedRegion region() const {
+        return region_;
     }
 
-    [[nodiscard]] std::size_t length() const {
-        return length_;
+    size_t size() const {
+        return region_.size();
     }
 
-    [[nodiscard]] std::filesystem::file_time_type last_write_time() const {
+    std::filesystem::file_time_type last_write_time() const {
         return std::filesystem::last_write_time(path_);
     }
 
-    void advise_normal();
-    void advise_random();
-    void advise_sequential();
+    void advise_normal() const;
+    void advise_random() const;
+    void advise_sequential() const;
 
   private:
     void map_existing(bool read_only);
+    void close();
 
-    void* mmap(FileDescriptor fd, bool read_only);
+    void* mmap(FileDescriptor fd, size_t size, bool read_only);
     void unmap();
+    void advise(int advice) const;
 
     //! The path to the file
     std::filesystem::path path_;
 
-    //! The address of the mapped area
-    uint8_t* address_{nullptr};
-
-    //! The file size
-    std::size_t length_{0};
+    //! The area mapped in memory
+    MemoryMappedRegion region_;
 
 #ifdef _WIN32
-    void cleanup();
-
     HANDLE file_ = nullptr;
     HANDLE mapping_ = nullptr;
-#else
-    void advise(int advice);
 #endif
+
+    //! Flag indicating if memory-mapping is managed internally or not
+    bool managed_;
 };
 
 struct MemoryMappedStreamBuf : std::streambuf {
-    MemoryMappedStreamBuf(char const* base, std::size_t size) {
-        char* p{const_cast<char*>(base)};
-        this->setg(p, p, p + size);
+    explicit MemoryMappedStreamBuf(MemoryMappedRegion region) {
+        auto p = reinterpret_cast<char*>(region.data());
+        this->setg(p, p, p + region.size());
     }
 };
 
 struct MemoryMappedInputStream : virtual MemoryMappedStreamBuf, std::istream {
-    MemoryMappedInputStream(char const* base, std::size_t size)
-        : MemoryMappedStreamBuf(base, size), std::istream(static_cast<std::streambuf*>(this)) {}
-    MemoryMappedInputStream(unsigned char const* base, std::size_t size)
-        : MemoryMappedInputStream(reinterpret_cast<char const*>(base), size) {}
+    explicit MemoryMappedInputStream(MemoryMappedRegion region)
+        : MemoryMappedStreamBuf(region), std::istream(static_cast<std::streambuf*>(this)) {}
 };
 
 }  // namespace silkworm

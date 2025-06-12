@@ -29,19 +29,19 @@ namespace silkworm::sentry::rlpx {
 using namespace boost::asio;
 
 Server::Server(
-    io_context& io_context,
+    const any_io_executor& executor,
     uint16_t port)
     : ip_(ip::address{ip::address_v4::any()}),
       port_(port),
-      peer_channel_(io_context) {}
+      peer_channel_(executor) {}
 
 ip::tcp::endpoint Server::listen_endpoint() const {
     return ip::tcp::endpoint{ip_, port_};
 }
 
-Task<void> Server::start(
-    silkworm::rpc::ServerContextPool& context_pool,
-    common::EccKeyPair node_key,
+Task<void> Server::run(
+    concurrency::ExecutorPool& executor_pool,
+    EccKeyPair node_key,
     std::string client_id,
     std::function<std::unique_ptr<Protocol>()> protocol_factory) {
     auto executor = co_await this_coro::executor;
@@ -59,23 +59,43 @@ Task<void> Server::start(
     acceptor.set_option(detail::socket_option::boolean<SOL_SOCKET, SO_REUSEPORT>(true));
 #endif
 
-    acceptor.bind(endpoint);
+    try {
+        acceptor.bind(endpoint);
+    } catch (const boost::system::system_error& ex) {
+        if (ex.code() == boost::system::errc::address_in_use) {
+            throw std::runtime_error("Sentry RLPx server has failed to start because port " + std::to_string(port_) + " is already in use. Try another one with --port.");
+        }
+        throw;
+    }
     acceptor.listen();
 
-    common::EnodeUrl node_url{node_key.public_key(), endpoint.address(), port_};
-    log::Info("sentry") << "rlpx::Server is listening at " << node_url.to_string();
+    EnodeUrl node_url{node_key.public_key(), endpoint.address(), port_, port_};
+    SILK_INFO_M("sentry") << "rlpx::Server is listening at " << node_url.to_string();
 
     while (acceptor.is_open()) {
-        auto& client_context = context_pool.next_io_context();
-        common::SocketStream stream{client_context};
-        co_await acceptor.async_accept(stream.socket(), use_awaitable);
+        auto client_executor = executor_pool.any_executor();
+        SocketStream stream{client_executor};
+        try {
+            co_await acceptor.async_accept(stream.socket(), use_awaitable);
+        } catch (const boost::system::system_error& ex) {
+            if (ex.code() == boost::system::errc::invalid_argument) {
+                SILK_ERROR_M("sentry") << "Sentry RLPx server got invalid_argument on accept port=" << port_;
+                continue;
+            }
+            SILK_CRIT_M("sentry") << "Sentry RLPx server unexpected end [" + std::string{ex.what()} + "]";
+            throw;
+        }
 
-        auto remote_endpoint = stream.socket().remote_endpoint();
-        log::Debug("sentry") << "rlpx::Server client connected from "
-                             << remote_endpoint.address().to_string() << ":" << remote_endpoint.port();
+        try {
+            const auto remote_endpoint = stream.socket().remote_endpoint();
+            SILK_DEBUG_M("sentry") << "rlpx::Server client connected from " << remote_endpoint;
+        } catch (const boost::system::system_error& ex) {
+            SILK_DEBUG_M("sentry") << "rlpx::Server client immediately disconnected [" + std::string{ex.what()} + "]";
+            continue;
+        }
 
         auto peer = std::make_shared<Peer>(
-            client_context,
+            client_executor,
             std::move(stream),
             node_key,
             client_id,

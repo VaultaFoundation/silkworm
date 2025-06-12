@@ -20,12 +20,13 @@
 
 #include <silkworm/core/rlp/decode.hpp>
 #include <silkworm/core/rlp/encode.hpp>
+#include <silkworm/core/types/evmc_bytes32.hpp>
 #include <silkworm/sync/internals/types.hpp>
 
 namespace silkworm {
 
 // HashOrNumber is a variant of Hash and BlockNum
-// It uses struct in place of "using", to obtain a strong typedef and avoid overload resolution ambiguities
+// It uses struct in place of "using", to obtain a strong type and avoid overload resolution ambiguities
 // in the rlp encoding/decoding functions
 struct HashOrNumber : public std::variant<Hash, BlockNum> {};
 
@@ -33,17 +34,18 @@ struct HashOrNumber : public std::variant<Hash, BlockNum> {};
 namespace rlp {
 
     inline void encode(Bytes& to, const HashOrNumber& from) {
-        if (std::holds_alternative<Hash>(from))
+        if (std::holds_alternative<Hash>(from)) {
             rlp::encode(to, std::get<Hash>(from));
-        else
+        } else {
             rlp::encode(to, std::get<BlockNum>(from));
+        }
     }
 
     inline size_t length(const HashOrNumber& from) {
-        if (std::holds_alternative<Hash>(from))
+        if (std::holds_alternative<Hash>(from)) {
             return rlp::length(std::get<Hash>(from));
-        else
-            return rlp::length(std::get<BlockNum>(from));
+        }
+        return rlp::length(std::get<BlockNum>(from));
     }
 
     inline DecodingResult decode(ByteView& from, HashOrNumber& to, Leftover mode = Leftover::kProhibit) noexcept {
@@ -63,11 +65,11 @@ namespace rlp {
             }
             to = {hash};
         } else if (h->payload_length <= 8) {
-            BlockNum number{};
-            if (DecodingResult res = rlp::decode(from, number, mode); !res) {
+            BlockNum block_num = 0;
+            if (DecodingResult res = rlp::decode(from, block_num, mode); !res) {
                 return res;
             }
-            to = {number};
+            to = {block_num};
         } else {
             return tl::unexpected{DecodingError::kUnexpectedLength};
         }
@@ -78,7 +80,7 @@ namespace rlp {
 
 inline std::ostream& operator<<(std::ostream& os, const HashOrNumber& packet) {
     if (std::holds_alternative<Hash>(packet))
-        os << std::get<Hash>(packet);
+        os << std::get<Hash>(packet).to_hex();
     else
         os << std::get<BlockNum>(packet);
     return os;

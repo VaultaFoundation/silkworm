@@ -16,15 +16,27 @@
 
 #pragma once
 
-#include <silkworm/node/db/bitmap.hpp>
-#include <silkworm/node/stagedsync/stages/stage.hpp>
+#include <silkworm/db/access_layer.hpp>
+#include <silkworm/db/datastore/etl/collector_settings.hpp>
+#include <silkworm/db/datastore/kvdb/bitmap.hpp>
+#include <silkworm/db/prune_mode.hpp>
+#include <silkworm/db/stage.hpp>
 
 namespace silkworm::stagedsync {
 
 class TxLookup : public Stage {
   public:
-    explicit TxLookup(NodeSettings* node_settings, SyncContext* sync_context)
-        : Stage(sync_context, db::stages::kTxLookupKey, node_settings){};
+    TxLookup(
+        SyncContext* sync_context,
+        db::DataModelFactory data_model_factory,
+        datastore::etl::CollectorSettings etl_settings,
+        db::BlockAmount prune_mode_tx_index)
+        : Stage(sync_context, db::stages::kTxLookupKey),
+          data_model_factory_(std::move(data_model_factory)),
+          etl_settings_(std::move(etl_settings)),
+          prune_mode_tx_index_(prune_mode_tx_index) {}
+    TxLookup(const TxLookup&) = delete;  // not copyable
+    TxLookup(TxLookup&&) = delete;       // nor movable
     ~TxLookup() override = default;
 
     Stage::Result forward(db::RWTxn& txn) final;
@@ -33,7 +45,11 @@ class TxLookup : public Stage {
     std::vector<std::string> get_log_progress() final;
 
   private:
-    std::unique_ptr<etl::Collector> collector_{nullptr};
+    db::DataModelFactory data_model_factory_;
+    datastore::etl::CollectorSettings etl_settings_;
+    db::BlockAmount prune_mode_tx_index_;
+
+    std::unique_ptr<datastore::kvdb::Collector> collector_;
 
     std::atomic_bool loading_{false};  // Whether we're in ETL loading phase
     std::string current_source_;       // Current source of data

@@ -16,17 +16,16 @@
 
 #include "server_settings.hpp"
 
-#include <catch2/catch.hpp>
+#include <catch2/catch_test_macros.hpp>
 
 #include <silkworm/infra/concurrency/context_pool_settings.hpp>
-#include <silkworm/infra/test/log.hpp>
+#include <silkworm/infra/test_util/log.hpp>
 
 namespace silkworm::rpc {
 
 // Exclude gRPC tests from sanitizer builds due to data race warnings inside gRPC library
 #ifndef SILKWORM_SANITIZE
 TEST_CASE("ServerConfig::ServerConfig", "[silkworm][rpc][server_settings]") {
-    test::SetLogVerbosityGuard log_guard{log::Level::kNone};
     ServerSettings config;
     CHECK(config.address_uri == kDefaultAddressUri);
     CHECK(config.context_pool_settings.num_contexts > 0);

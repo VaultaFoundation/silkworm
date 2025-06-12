@@ -27,51 +27,45 @@
 namespace silkworm {
 
 InboundGetBlockBodies::InboundGetBlockBodies(ByteView data, PeerId peer_id)
-    : peerId_(std::move(peer_id)) {
+    : peer_id_(std::move(peer_id)) {
     success_or_throw(rlp::decode(data, packet_));
     SILK_TRACE << "Received message " << *this;
 }
 
-/*
- // ReplyBlockBodiesRLP is the eth/66 version of SendBlockBodiesRLP.
-func (p *Peer) ReplyBlockBodiesRLP(id uint64, bodies []rlp.RawValue) error {
-        // Not packed into BlockBodiesPacket to avoid RLP decoding
-        return p2p.Send(p.rw, BlockBodiesMsg, BlockBodiesRLPPacket66{
-                RequestId:            id,
-                BlockBodiesRLPPacket: bodies,
-        })
-}
- */
-void InboundGetBlockBodies::execute(db::ROAccess db, HeaderChain&, BodySequence& bs, SentryClient& sentry) {
+void InboundGetBlockBodies::execute(db::DataStoreRef db, HeaderChain&, BodySequence& bs, SentryClient& sentry) {
     using namespace std;
 
     SILK_TRACE << "Processing message " << *this;
 
-    if (bs.highest_block_in_output() == 0)
+    if (bs.max_block_in_output() == 0)
         return;
 
-    BodyRetrieval body_retrieval(db);
+    datastore::kvdb::ROTxnManaged tx = db.chaindata.access_ro().start_ro_tx();
+    BodyRetrieval body_retrieval{tx};
 
     BlockBodiesPacket66 reply;
-    reply.requestId = packet_.requestId;
+    reply.request_id = packet_.request_id;
     reply.request = body_retrieval.recover(packet_.request);
 
     if (reply.request.empty()) {
-        log::Trace() << "[WARNING] Not replying to " << identify(*this) << ", no blocks found";
+        SILK_TRACE << "[WARNING] Not replying to " << identify(*this) << ", no blocks found";
         return;
     }
 
     SILK_TRACE << "Replying to " << identify(*this) << " using send_message_by_id with "
                << reply.request.size() << " bodies";
 
-    OutboundBlockBodies reply_message{std::move(reply)};
-    [[maybe_unused]] auto peers = sentry.send_message_by_id(reply_message, peerId_);
+    try {
+        OutboundBlockBodies reply_message{std::move(reply)};
+        [[maybe_unused]] auto peers = sentry.send_message_by_id(reply_message, peer_id_);
 
-    SILK_TRACE << "Received sentry result of " << identify(*this) << ": "
-               << std::to_string(peers.size()) + " peer(s)";
+        SILK_TRACE << "Received sentry result of " << identify(*this) << ": " << std::to_string(peers.size()) + " peer(s)";
+    } catch (const boost::system::system_error& se) {
+        SILK_TRACE << "InboundGetBlockBodies failed send_message_by_id error: " << se.what();
+    }
 }
 
-uint64_t InboundGetBlockBodies::reqId() const { return packet_.requestId; }
+uint64_t InboundGetBlockBodies::req_id() const { return packet_.request_id; }
 
 std::string InboundGetBlockBodies::content() const {
     std::stringstream content;

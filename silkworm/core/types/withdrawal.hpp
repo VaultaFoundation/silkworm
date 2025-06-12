@@ -16,7 +16,9 @@
 
 #pragma once
 
-#include <silkworm/core/common/base.hpp>
+#include <evmc/evmc.hpp>
+
+#include <silkworm/core/common/bytes.hpp>
 #include <silkworm/core/rlp/decode.hpp>
 
 namespace silkworm {
@@ -27,7 +29,7 @@ struct Withdrawal {
     evmc::address address{};
     uint64_t amount{0};  // in GWei
 
-    friend bool operator==(const Withdrawal&, const Withdrawal&);
+    friend bool operator==(const Withdrawal&, const Withdrawal&) = default;
 };
 
 namespace rlp {

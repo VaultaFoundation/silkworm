@@ -16,7 +16,7 @@
 
 #include "environment.hpp"
 
-#include <catch2/catch.hpp>
+#include <catch2/catch_test_macros.hpp>
 
 namespace silkworm {
 
@@ -37,6 +37,11 @@ TEST_CASE("Environment") {
         REQUIRE(!Environment::are_pre_verified_hashes_disabled());
         Environment::set_pre_verified_hashes_disabled();
         REQUIRE(Environment::are_pre_verified_hashes_disabled());
+    }
+
+    SECTION("get env var") {
+        CHECK(Environment::get("UNEXISTING_ENV_VAR").empty());
+        CHECK_FALSE(Environment::get("PATH").empty());
     }
 }
 

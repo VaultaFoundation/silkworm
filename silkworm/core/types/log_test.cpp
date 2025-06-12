@@ -16,12 +16,17 @@
 
 #include "log.hpp"
 
-#include <catch2/catch.hpp>
+#include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers.hpp>
 
 #include <silkworm/core/common/util.hpp>
 #include <silkworm/core/rlp/encode_vector.hpp>
+#include <silkworm/core/types/address.hpp>
+#include <silkworm/core/types/evmc_bytes32.hpp>
 
 namespace silkworm {
+
+using namespace evmc::literals;
 
 TEST_CASE("Log RLP encoding") {
     Log sample_log1{
@@ -34,7 +39,8 @@ TEST_CASE("Log RLP encoding") {
     SECTION("own encode method") {
         Bytes encoded;
         rlp::encode(encoded, sample_log1);
-        CHECK(to_hex(encoded) == expected_rlp1);
+        // We need double parentheses here: https://github.com/conan-io/conan-center-index/issues/13993
+        CHECK((to_hex(encoded) == expected_rlp1));
     }
 
     SECTION("variadic struct encode") {
@@ -44,7 +50,8 @@ TEST_CASE("Log RLP encoding") {
             sample_log1.address,
             sample_log1.topics,
             sample_log1.data);
-        CHECK(to_hex(encoded) == expected_rlp1);
+        // We need double parentheses here: https://github.com/conan-io/conan-center-index/issues/13993
+        CHECK((to_hex(encoded) == expected_rlp1));
     }
 }
 

@@ -44,7 +44,7 @@ NodeKey NodeKeyConfig::load() const {
     if (!data)
         throw runtime_error("NodeKeyConfig::load failed to parse a hex string in the node key file");
 
-    return common::EccKeyPair{data.value()};
+    return EccKeyPair{data.value()};
 }
 
 void NodeKeyConfig::save(const NodeKey& key) const {
@@ -66,9 +66,8 @@ NodeKey node_key_get_or_generate(
         const Bytes* data = get_if<Bytes>(&node_key_option.value());
         if (data) {
             return NodeKey(*data);
-        } else {
-            config = NodeKeyConfig(get<fs::path>(node_key_option.value()));
         }
+        config = NodeKeyConfig(get<fs::path>(node_key_option.value()));
     }
 
     if (config.exists()) {

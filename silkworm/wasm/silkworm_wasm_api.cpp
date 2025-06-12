@@ -21,6 +21,8 @@
 #include <silkworm/core/common/util.hpp>
 #include <silkworm/core/protocol/ethash_rule_set.hpp>
 #include <silkworm/core/protocol/intrinsic_gas.hpp>
+#include <silkworm/core/types/address.hpp>
+#include <silkworm/core/types/evmc_bytes32.hpp>
 
 void* new_buffer(size_t size) { return std::malloc(size); }
 
@@ -48,14 +50,6 @@ intx::uint256* new_uint256_le(uint64_t a, uint64_t b, uint64_t c, uint64_t d) { 
 
 void delete_uint256(intx::uint256* x) { delete x; }
 
-const ChainConfig* lookup_config(uint64_t chain_id) {
-    const auto chain{lookup_known_chain(chain_id)};
-    if (!chain.has_value()) {
-        return nullptr;
-    }
-    return chain->second;
-}
-
 ChainConfig* new_config(uint64_t chain_id) {
     auto out{new ChainConfig};
     out->chain_id = chain_id;
@@ -68,9 +62,9 @@ void config_set_muir_glacier_block(ChainConfig* config, uint64_t block) { config
 
 void config_set_dao_block(ChainConfig* config, uint64_t block) { config->dao_block = block; }
 
-void difficulty(intx::uint256* in_out, uint64_t block_number, uint64_t block_timestamp, uint64_t parent_timestamp,
+void difficulty(intx::uint256* in_out, uint64_t block_num, uint64_t block_timestamp, uint64_t parent_timestamp,
                 bool parent_has_uncles, const ChainConfig* config) {
-    *in_out = protocol::EthashRuleSet::difficulty(block_number, block_timestamp, /*parent_difficulty=*/*in_out, parent_timestamp,
+    *in_out = protocol::EthashRuleSet::difficulty(block_num, block_timestamp, /*parent_difficulty=*/*in_out, parent_timestamp,
                                                   parent_has_uncles, *config);
 }
 
@@ -90,11 +84,6 @@ void delete_transaction(Transaction* x) { delete x; }
 bool check_intrinsic_gas(const Transaction* txn, evmc_revision rev) {
     intx::uint128 g0{protocol::intrinsic_gas(*txn, rev)};
     return txn->gas_limit >= g0;
-}
-
-const uint8_t* recover_sender(Transaction* txn) {
-    txn->recover_sender();
-    return txn->from ? txn->from->bytes : nullptr;
 }
 
 void keccak256(uint8_t* out, const Bytes* in) {
@@ -138,8 +127,6 @@ uint64_t header_number(const BlockHeader* header) { return header->number; }
 
 uint8_t* header_state_root(BlockHeader* header) { return header->state_root.bytes; }
 
-void block_recover_senders(Block* b) { b->recover_senders(); }
-
 InMemoryState* new_state() { return new InMemoryState; }
 
 void delete_state(InMemoryState* x) { delete x; }
@@ -151,11 +138,9 @@ uint8_t* state_root_hash_new(const InMemoryState* state) {
     return static_cast<uint8_t*>(out);
 }
 
-static evmc::address address_from_ptr(const uint8_t* ptr) { return to_evmc_address({ptr, kAddressLength}); }
+static evmc::address address_from_ptr(const uint8_t* ptr) { return bytes_to_address({ptr, kAddressLength}); }
 
 static evmc::bytes32 bytes32_from_ptr(const uint8_t* ptr) { return to_bytes32({ptr, kHashLength}); }
-
-size_t state_number_of_accounts(const InMemoryState* state) { return state->number_of_accounts(); }
 
 size_t state_storage_size(const InMemoryState* state, const uint8_t* address, const Account* account) {
     return state->storage_size(address_from_ptr(address), account->incarnation);
@@ -172,9 +157,9 @@ Account* state_read_account_new(const State* state, const uint8_t* address) {
     return out;
 }
 
-Bytes* state_read_code_new(const State* state, const uint8_t* code_hash) {
+Bytes* state_read_code_new(const State* state, const uint8_t* address, const uint8_t* code_hash) {
     auto out{new Bytes};
-    *out = state->read_code(bytes32_from_ptr(code_hash));
+    *out = state->read_code(address_from_ptr(address), bytes32_from_ptr(code_hash));
     return out;
 }
 
@@ -182,7 +167,7 @@ Bytes* state_read_storage_new(const State* state, const uint8_t* address, const 
                               const Bytes* location) {
     evmc::bytes32 value{state->read_storage(address_from_ptr(address), account->incarnation, to_bytes32(*location))};
     auto out{new Bytes};
-    *out = zeroless_view(value);
+    *out = zeroless_view(value.bytes);
     return out;
 }
 

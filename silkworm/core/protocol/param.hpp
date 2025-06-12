@@ -18,10 +18,11 @@
 
 #include <cstdint>
 
+#include <evmc/evmc.hpp>
+
 #include <silkworm/core/common/base.hpp>
 
 namespace silkworm::protocol {
-
 // Gas fee schedule—see Appendix G of the Yellow Paper
 // https://ethereum.github.io/yellowpaper/paper.pdf
 namespace fee {
@@ -40,6 +41,11 @@ namespace fee {
     inline constexpr uint64_t kInitCodeWordCost{2};  // EIP-3860
 
 }  // namespace fee
+
+inline constexpr uint64_t kMinGasLimit{5000};
+// https://github.com/ethereum/go-ethereum/blob/v1.13.4/params/protocol_params.go#L28
+// EIP-1985: Sane limits for certain EVM parameters
+inline constexpr uint64_t kMaxGasLimit{INT64_MAX};  // 2^63-1
 
 inline constexpr size_t kMaxCodeSize{0x6000};                // EIP-170
 inline constexpr size_t kMaxInitCodeSize{2 * kMaxCodeSize};  // EIP-3860
@@ -61,10 +67,31 @@ inline constexpr uint64_t kElasticityMultiplier{2};
 
 // EIP-4844: Shard Blob Transactions
 inline constexpr uint8_t kBlobCommitmentVersionKzg{1};
-inline constexpr uint64_t kMaxDataGasPerBlock{1u << 19};
-inline constexpr uint64_t kTargetDataGasPerBlock{1u << 18};
-inline constexpr uint64_t kDataGasPerBlob{1u << 17};
-inline constexpr uint64_t kMinDataGasPrice{1};
-inline constexpr uint64_t kDataGasPriceUpdateFraction{2225652};
+inline constexpr uint64_t kGasPerBlob{1u << 17};
+inline constexpr uint64_t kTargetBlobGasPerBlock{3 * kGasPerBlob};
+inline constexpr uint64_t kMaxBlobGasPerBlock{6 * kGasPerBlob};
+inline constexpr uint64_t kMinBlobGasPrice{1};
+inline constexpr uint64_t kBlobGasPriceUpdateFraction{3338477};
+
+// EIP-4788: Beacon block root in the EVM
+using namespace evmc::literals;
+inline constexpr uint64_t kSystemCallGasLimit{30'000'000};
+inline constexpr evmc::address kSystemAddress{0xfffffffffffffffffffffffffffffffffffffffe_address};
+inline constexpr evmc::address kBeaconRootsAddress{0x000F3df6D732807Ef1319fB7B8bB8522d0Beac02_address};
+
+// EIP-6110: Supply validator deposits on chain
+inline constexpr auto kDepositContractAddress{0x00000000219ab540356cbb839cbe05303d7705fa_address};
+
+// EIP-7002: Execution layer triggerable withdrawals
+inline constexpr auto kWithdrawalRequestAddress{0x09Fc772D0857550724b07B850a4323f39112aAaA_address};
+
+// EIP-7251: Increase the MAX_EFFECTIVE_BALANCE
+inline constexpr auto kConsolidationRequestAddress{0x01aBEa29659e5e97C95107F20bb753cD3e09bBBb_address};
+
+// EIP-2935: Serve historical block hashes from state
+inline constexpr evmc::address kHistoryStorageAddress{0x0aae40965e6800cd9b1f4b05ff21581047e3f91e_address};
+
+// Used in Bor
+inline constexpr size_t kExtraSealSize{65};
 
 }  // namespace silkworm::protocol

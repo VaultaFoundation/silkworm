@@ -21,9 +21,10 @@
 #include <set>
 #include <span>
 #include <stack>
+#include <utility>
 #include <vector>
 
-#include <silkworm/node/db/access_layer.hpp>
+#include <silkworm/db/access_layer.hpp>
 
 #include "priority_queue.hpp"
 #include "types.hpp"
@@ -32,20 +33,20 @@ namespace silkworm {
 
 // Auxiliary types needed to implement WorkingChain
 
-// A link corresponds to a block header, links are connected to each other by reverse of parentHash relation
+// A link corresponds to a block header, links are connected to each other by reverse of parent_hash relation
 struct Link {
     std::shared_ptr<BlockHeader> header;      // Header to which this link point to
-    BlockNum blockHeight = 0;                 // Block height of the header, repeated here for convenience (remove?)
+    BlockNum block_num = 0;                   // Block block_num of the header, repeated here for convenience (remove?)
     Hash hash;                                // Hash of the header
-    std::vector<std::shared_ptr<Link>> next;  // Reverse of parentHash,allows iter.over links in asc. block height order
+    std::vector<std::shared_ptr<Link>> next;  // Reverse of parent_hash,allows iter.over links in asc. block number order
     bool persisted = false;                   // Whether this link comes from the database record
     bool preverified = false;                 // Ancestor of pre-verified header
 
-    Link(BlockHeader h, bool persisted_) {
-        blockHeight = h.number;
-        hash = h.hash();  // save computation
+    Link(BlockHeader h, bool persist)
+        : block_num{h.number},
+          hash{h.hash()},  // save computation
+          persisted{persist} {
         header = std::make_shared<BlockHeader>(std::move(h));
-        persisted = persisted_;
     }
 
     void remove_child(const Link& child) {
@@ -61,24 +62,24 @@ struct Link {
 
 // An anchor is the bottom of a chain bundle that consists of one anchor and some chain links.
 struct Anchor {
-    Hash parentHash;                           // Hash of the header this anchor can be connected to (to disappear)
-    BlockNum blockHeight;                      // block height of the anchor
+    Hash parent_hash;                          // Hash of the header this anchor can be connected to (to disappear)
+    BlockNum block_num;                        // block number of the anchor
     time_point_t timestamp;                    // request/arrival time
     time_point_t prev_timestamp;               // Used to restore timestamp when a request fails for network reasons
-    int timeouts{0};                           // Number of timeout that this anchor has experienced;after certain threshold,it gets invalidated
+    int timeouts{0};                           // Number of timeout that this anchor has experienced; after certain threshold, it gets invalidated
     std::vector<std::shared_ptr<Link>> links;  // Links attached immediately to this anchor
-    BlockNum lastLinkHeight{0};                // the blockHeight of the last link of the chain bundle anchored to this
-    PeerId peerId;
+    BlockNum last_link_block_num{0};           // the block_num of the last link of the chain bundle anchored to this
+    PeerId peer_id;
 
-    Anchor(const BlockHeader& header, PeerId p) {
-        parentHash = header.parent_hash;
-        blockHeight = header.number;
-        lastLinkHeight = blockHeight;
-        // timestamp = 0;  // ready to get extended
-        peerId = std::move(p);
+    Anchor(const BlockHeader& header, PeerId p)
+        : parent_hash{header.parent_hash},
+          block_num{header.number},
+          last_link_block_num{block_num},
+          // timestamp{0},  // ready to get extended
+          peer_id{std::move(p)} {
     }
 
-    BlockNum chainLength() { return lastLinkHeight - blockHeight + 1; }
+    BlockNum chain_length() const { return last_link_block_num - block_num + 1; }
 
     void remove_child(const Link& child) {
         std::erase_if(links, [child](auto& link) { return (link->hash == child.hash); });
@@ -93,11 +94,11 @@ struct Anchor {
     void update_timestamp(time_point_t time_point) {
         prev_timestamp = timestamp;
         timestamp = time_point;
-        timeouts++;
+        ++timeouts;
     }
 
     void restore_timestamp() {
-        timeouts--;
+        --timeouts;
         timestamp = prev_timestamp;
     }
 };
@@ -105,31 +106,39 @@ struct Anchor {
 // Binary relations to use in priority queues
 struct LinkOlderThan : public std::function<bool(std::shared_ptr<Link>, std::shared_ptr<Link>)> {
     bool operator()(const std::shared_ptr<Link>& x, const std::shared_ptr<Link>& y) const {
-        return x->blockHeight != y->blockHeight ? x->blockHeight < y->blockHeight :  // cause ordering
-                   x < y;                                                            // preserve identity
+        return x->block_num != y->block_num ? x->block_num < y->block_num :  // cause ordering
+                   x < y;                                                    // preserve identity
     }
 };
 
 struct LinkYoungerThan : public std::function<bool(std::shared_ptr<Link>, std::shared_ptr<Link>)> {
     bool operator()(const std::shared_ptr<Link>& x, const std::shared_ptr<Link>& y) const {
-        return x->blockHeight != y->blockHeight ? x->blockHeight > y->blockHeight :  // cause ordering
-                   x > y;                                                            // preserve identity
+        return x->block_num != y->block_num ? x->block_num > y->block_num :  // cause ordering
+                   x > y;                                                    // preserve identity
     }
 };
 
 struct AnchorYoungerThan : public std::function<bool(std::shared_ptr<Link>, std::shared_ptr<Link>)> {
     bool operator()(const std::shared_ptr<Anchor>& x, const std::shared_ptr<Anchor>& y) const {
-        return x->timestamp != y->timestamp ? x->timestamp > y->timestamp :               // prefer smaller timestamp
-                   (x->blockHeight != y->blockHeight ? x->blockHeight > y->blockHeight :  // when timestamps are the same prioritise low blockHeight
-                        x > y);                                                           // when blockHeight are the same preserve identity
+        if (x->timestamp != y->timestamp) {
+            return x->timestamp > y->timestamp;  // prefer smaller timestamp
+        }
+        if (x->block_num != y->block_num) {
+            return x->block_num > y->block_num;  // when timestamps are the same prioritise low block_num
+        }
+        return x > y;  // when block_num are the same preserve identity
     }
 };
 
 struct AnchorOlderThan : public std::function<bool(std::shared_ptr<Anchor>, std::shared_ptr<Anchor>)> {
     bool operator()(const std::shared_ptr<Anchor>& x, const std::shared_ptr<Anchor>& y) const {
-        return x->timestamp != y->timestamp ? x->timestamp < y->timestamp :               // prefer smaller timestamp
-                   (x->blockHeight != y->blockHeight ? x->blockHeight < y->blockHeight :  // when timestamps are the same prioritise low blockHeight
-                        x < y);                                                           // when blockHeight are the same preserve identity
+        if (x->timestamp != y->timestamp) {
+            return x->timestamp < y->timestamp;  // prefer smaller timestamp
+        }
+        if (x->block_num != y->block_num) {
+            return x->block_num < y->block_num;  // when timestamps are the same prioritise low block_num
+        }
+        return x < y;  // when block_num are the same preserve identity
     }
 };
 
@@ -139,10 +148,10 @@ struct BlockOlderThan : public std::function<bool(BlockNum, BlockNum)> {
 
 // Priority queue types
 
-// For persisted links, those with the lower block heights get evicted first. This means that more recently persisted
+// For persisted links, those with the lower block numbers get evicted first. This means that more recently persisted
 // links are preferred.
-// For non-persisted links, those with the highest block heights get evicted first. This is to prevent "holes" in the
-// block heights that may cause inability to insert headers in the ascending order of their block heights.
+// For non-persisted links, those with the max block numbers get evicted first. This is to prevent "holes" in the
+// block numbers that may cause inability to insert headers in the ascending order of their block numbers.
 
 // We need a queue for persisted links to
 // - get older links to evict when we need to free memory
@@ -151,28 +160,28 @@ struct BlockOlderThan : public std::function<bool(BlockNum, BlockNum)> {
 
 }  // namespace silkworm
 template <>
-struct mbpq_key<std::shared_ptr<silkworm::Link>> {                                          // extract key type and value
-    using type = silkworm::BlockNum;                                                        // type of the key
-    static type value(const std::shared_ptr<silkworm::Link>& l) { return l->blockHeight; }  // value of the key
+struct MbpqKey<std::shared_ptr<silkworm::Link>> {                                               // extract key type and value
+    using type = silkworm::BlockNum;                                                            // type of the key
+    static type value(const std::shared_ptr<silkworm::Link>& link) { return link->block_num; }  // value of the key
 };
 namespace silkworm {  // reopen namespace
 
 // A queue of older links to evict when we need to free memory
-using OldestFirstLinkMap = map_based_priority_queue<std::shared_ptr<Link>, BlockOlderThan>;
+using OldestFirstLinkMap = MapBasedPriorityQueue<std::shared_ptr<Link>, BlockOlderThan>;
 
 // A queue of younger links to get the next link to process
-using OldestFirstLinkQueue = set_based_priority_queue<std::shared_ptr<Link>, LinkOlderThan>;
+using OldestFirstLinkQueue = SetBasedPriorityQueue<std::shared_ptr<Link>, LinkOlderThan>;
 
 // We need a queue for anchors to get anchors in reverse order respect to timestamp
 // (that is the time at which we asked peers for ancestor of the anchor)
-using OldestFirstAnchorQueue = set_based_priority_queue<std::shared_ptr<Anchor>, AnchorOlderThan>;
+using OldestFirstAnchorQueue = SetBasedPriorityQueue<std::shared_ptr<Anchor>, AnchorOlderThan>;
 
 // Maps to get a link or an anchor by hash
 using LinkMap = std::map<Hash, std::shared_ptr<Link>>;      // hash = link hash
 using AnchorMap = std::map<Hash, std::shared_ptr<Anchor>>;  // hash = anchor *parent* hash
 
 /* We can improve encapsulation:
- * AnchorMap key is the anchor parent hash, note 'parent', so it is better to encapsulate this knowledge in a class
+ * AnchorMap key is the anchor parent hash, note 'parent', so it is better to encapsulate this knowledge in a class,
  * so we can write anchor_map.add(anchor) in place of anchor_map[anchor->parent_hash] = anchor
  * Also anchorQueue and anchorMap should be encapsulated because if one change an anchor then anchorQueue must be
  * fixed (= re-ordered). For this purpose assess boost::multi-index-container to replace the queue + map pair
@@ -184,13 +193,13 @@ using LinkLIFOQueue = std::stack<std::shared_ptr<Link>>;
 
 using Headers = std::vector<std::shared_ptr<BlockHeader>>;
 
-inline BlockHeader& header_at(Headers::iterator it) { return *it->get(); }
+inline BlockHeader& header_at(Headers::iterator it) { return **it; }
 
-inline BlockHeader& header_at(Headers::reverse_iterator it) { return *it->get(); }
+inline BlockHeader& header_at(Headers::reverse_iterator it) { return **it; }
 
-inline const BlockHeader& header_at(Headers::const_iterator it) { return *it->get(); }
+inline const BlockHeader& header_at(Headers::const_iterator it) { return **it; }
 
-inline const BlockHeader& header_at(Headers::const_reverse_iterator it) { return *it->get(); }
+inline const BlockHeader& header_at(Headers::const_reverse_iterator it) { return **it; }
 
 struct Segment;  // forward declaration
 
@@ -206,33 +215,33 @@ struct HeaderList : std::enable_shared_from_this<HeaderList> {
         return std::shared_ptr<HeaderList>(new HeaderList(headers));
     }
 
-    auto split_into_segments() -> std::tuple<std::vector<Segment>, Penalty>;  // the core functionality of HeaderList
+    std::tuple<std::vector<Segment>, Penalty> split_into_segments();  // the core functionality of HeaderList
 
     std::vector<BlockHeader>& headers() { return headers_; }
 
   private:
     // ctor is private because instances need to stay in the heap, use the provided make() method to create an instance
-    HeaderList(std::vector<BlockHeader> headers) : headers_(std::move(headers)) {}
+    explicit HeaderList(std::vector<BlockHeader> headers) : headers_(std::move(headers)) {}
 
     std::vector<BlockHeader> headers_;
 
     std::vector<Header_Ref> to_ref() {
         std::vector<Header_Ref> refs;
-        for (Header_Ref i = headers_.begin(); i < headers_.end(); i++) refs.push_back(i);
+        for (auto i = headers_.begin(); i < headers_.end(); ++i) refs.emplace_back(i);
         return refs;
     }
 
-    static auto childParentValidity(Header_Ref child, Header_Ref parent) -> std::tuple<bool, Penalty> {
-        if (parent->number + 1 != child->number) return {false, Penalty::WrongChildBlockHeightPenalty};
-        return {true, NoPenalty};
+    static std::tuple<bool, Penalty> child_parent_validity(Header_Ref child, Header_Ref parent) {
+        if (parent->number + 1 != child->number) return {false, Penalty::kWrongChildBlockHeightPenalty};
+        return {true, kNoPenalty};
     }
 
-    static auto childrenParentValidity(const std::vector<Header_Ref>& children, Header_Ref parent) -> std::tuple<bool, Penalty> {
+    static std::tuple<bool, Penalty> children_parent_validity(const std::vector<Header_Ref>& children, Header_Ref parent) {
         for (auto& child : children) {
-            auto [valid, penalty] = childParentValidity(child, parent);
+            auto [valid, penalty] = child_parent_validity(child, parent);
             if (!valid) return {false, penalty};
         }
-        return {true, Penalty::NoPenalty};
+        return {true, Penalty::kNoPenalty};
     }
 };
 
@@ -241,10 +250,10 @@ struct HeaderList : std::enable_shared_from_this<HeaderList> {
 struct Segment
     : public std::vector<HeaderList::Header_Ref> {  // pointers/iterators to the headers that belongs to this segment
 
-    Segment(std::shared_ptr<HeaderList> line) : line_(line) {}
+    explicit Segment(std::shared_ptr<HeaderList> line) : line_(std::move(line)) {}
 
     void push_back(const HeaderList::Header_Ref& val) {
-        assert(empty() || back()->number == val->number + 1);  // also back()->parent_hash == val->hash() but expensive
+        SILKWORM_ASSERT(empty() || back()->number == val->number + 1);  // also back()->parent_hash == val->hash() but expensive
         std::vector<HeaderList::Header_Ref>::push_back(val);
     }
 
@@ -255,13 +264,13 @@ struct Segment
         });
     }
 
-    [[nodiscard]] HeaderList::Header_Ref highest_header() const { return front(); }
-    [[nodiscard]] HeaderList::Header_Ref lowest_header() const { return back(); }
+    HeaderList::Header_Ref max_header() const { return front(); }
+    HeaderList::Header_Ref lowest_header() const { return back(); }
 
     using Slice = std::span<const HeaderList::Header_Ref>;  // a Segment slice
 
-    [[nodiscard]] Slice slice(size_t start, size_t end) const {
-        return Slice(data() + start, data() + end);
+    Slice slice(size_t start, size_t end) const {
+        return {data() + start, data() + end};
     }
 
   protected:

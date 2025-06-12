@@ -18,7 +18,10 @@
 
 #include <bit>
 
+#include <gsl/narrow>
+
 #include <silkworm/core/trie/nibbles.hpp>
+#include <silkworm/db/util.hpp>
 #include <silkworm/infra/common/decoding_exception.hpp>
 
 namespace silkworm::trie {
@@ -64,13 +67,13 @@ void SubNode::parse(ByteView k, ByteView v) {
 
     success_or_throw(Node::decode_from_storage(v, *this));
 
-    child_id = static_cast<int8_t>(std::countr_zero(state_mask_)) - 1;
-    max_child_id = static_cast<int8_t>(std::bit_width(state_mask_));
+    child_id = gsl::narrow<int8_t>(std::countr_zero(state_mask_)) - 1;  // NOLINT
+    max_child_id = gsl::narrow<int8_t>(std::bit_width(state_mask_));
     hash_id = -1;
     deleted = false;
 }
 
-TrieCursor::TrieCursor(db::ROCursor& db_cursor, PrefixSet* changed, etl::Collector* collector)
+TrieCursor::TrieCursor(datastore::kvdb::ROCursor& db_cursor, PrefixSet* changed, datastore::etl::Collector* collector)
     : db_cursor_(db_cursor), changed_list_{changed}, collector_{collector} {
     curr_key_.reserve(64);
     prev_key_.reserve(64);
@@ -78,7 +81,7 @@ TrieCursor::TrieCursor(db::ROCursor& db_cursor, PrefixSet* changed, etl::Collect
     buffer_.reserve(128);
 }
 
-TrieCursor::move_operation_result TrieCursor::to_prefix(ByteView prefix) {
+TrieCursor::MoveOperationResult TrieCursor::to_prefix(ByteView prefix) {
     // 0 bytes for TrieAccounts
     // 40 bytes (hashed address + incarnation) for TrieStorage
     if (size_t len{prefix.length()}; len != 0 && len != db::kHashedStoragePrefixLength) {
@@ -120,7 +123,7 @@ TrieCursor::move_operation_result TrieCursor::to_prefix(ByteView prefix) {
         }
         if (!has_changes) {
             end_of_tree_ = true;  // We don't need to further traverse this trie
-            return {curr_key_, node.root_hash().value(), false};
+            return {curr_key_, node.root_hash(), false};
         }
         db_delete(node);
     } else {
@@ -133,7 +136,7 @@ TrieCursor::move_operation_result TrieCursor::to_prefix(ByteView prefix) {
     return to_next();
 }
 
-TrieCursor::move_operation_result TrieCursor::to_next() {
+TrieCursor::MoveOperationResult TrieCursor::to_next() {
     /*
      * We process node's nibbled keys in ascending lexicographical order
      * 0x
@@ -174,7 +177,9 @@ TrieCursor::move_operation_result TrieCursor::to_next() {
     while (!end_of_tree_) {
         auto& sub_node{sub_nodes_[level_]};
         ++sub_node.child_id;  // Advance to next child_id. (Note we start from -1 so "first next" is 0)
-        sub_node.hash_id += static_cast<int>(sub_node.has_hash());
+        if (sub_node.has_hash()) {
+            ++sub_node.hash_id;
+        }
 
         // On reach of max_child_id the node is completely traversed :
         // ascend one level, if possible, or mark the end of the tree (completely traversed)
@@ -218,21 +223,21 @@ TrieCursor::move_operation_result TrieCursor::to_next() {
 
 bool TrieCursor::db_seek(ByteView seek_key) {
     buffer_.assign(prefix_).append(seek_key);
-    const auto buffer_slice{db::to_slice(buffer_)};
+    const auto buffer_slice = datastore::kvdb::to_slice(buffer_);
     auto data{buffer_.empty() ? db_cursor_.to_first(false) : db_cursor_.lower_bound(buffer_slice, false)};
     if (!data || !data.key.starts_with(buffer_slice)) {
         return false;
     }
 
-    ByteView db_cursor_key{db::from_slice(data.key)};  // Save db_cursor_ key ...
-    db_cursor_key.remove_prefix(prefix_.length());     // ... and remove prefix_ so we have node key
+    ByteView db_cursor_key = datastore::kvdb::from_slice(data.key);  // Save db_cursor_ key ...
+    db_cursor_key.remove_prefix(prefix_.length());                   // ... and remove prefix_ so we have node key
     if (seek_key.empty() && !db_cursor_key.empty()) {
         // Note ! an empty seek_key means we're looking for a root node with empty key which does not exist
         return false;
     }
 
-    ByteView db_cursor_val{db::from_slice(data.value)};  // Save db_cursor_ value
-    level_ += seek_key.empty() ? 0 : 1u;                 // Down one level for child node. Stay at zero for root node
+    ByteView db_cursor_val = datastore::kvdb::from_slice(data.value);  // Save db_cursor_ value
+    level_ += seek_key.empty() ? 0 : 1u;                               // Down one level for child node. Stay at zero for root node
     auto& new_node{sub_nodes_[level_]};
     new_node.parse(db_cursor_key, db_cursor_val);
     return true;

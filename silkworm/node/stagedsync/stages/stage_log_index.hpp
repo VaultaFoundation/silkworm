@@ -18,17 +18,26 @@
 
 #include <stdexcept>
 
-#include <cbor/cbor.h>
-
-#include <silkworm/node/db/bitmap.hpp>
-#include <silkworm/node/stagedsync/stages/stage.hpp>
+#include <silkworm/db/datastore/etl/collector_settings.hpp>
+#include <silkworm/db/datastore/kvdb/bitmap.hpp>
+#include <silkworm/db/prune_mode.hpp>
+#include <silkworm/db/stage.hpp>
 
 namespace silkworm::stagedsync {
 
 class LogIndex : public Stage {
   public:
-    explicit LogIndex(NodeSettings* node_settings, SyncContext* sync_context)
-        : Stage(sync_context, db::stages::kLogIndexKey, node_settings){};
+    LogIndex(
+        SyncContext* sync_context,
+        size_t batch_size,
+        datastore::etl::CollectorSettings etl_settings,
+        db::BlockAmount prune_mode_history)
+        : Stage(sync_context, db::stages::kLogIndexKey),
+          batch_size_(batch_size),
+          etl_settings_(std::move(etl_settings)),
+          prune_mode_history_(prune_mode_history) {}
+    LogIndex(const LogIndex&) = delete;  // not copyable
+    LogIndex(LogIndex&&) = delete;       // nor movable
     ~LogIndex() override = default;
 
     Stage::Result forward(db::RWTxn& txn) final;
@@ -37,9 +46,13 @@ class LogIndex : public Stage {
     std::vector<std::string> get_log_progress() final;
 
   private:
-    std::unique_ptr<etl::Collector> topics_collector_{nullptr};
-    std::unique_ptr<etl::Collector> addresses_collector_{nullptr};
-    std::unique_ptr<db::bitmap::IndexLoader> index_loader_{nullptr};
+    size_t batch_size_;
+    datastore::etl::CollectorSettings etl_settings_;
+    db::BlockAmount prune_mode_history_;
+
+    std::unique_ptr<datastore::kvdb::Collector> topics_collector_;
+    std::unique_ptr<datastore::kvdb::Collector> addresses_collector_;
+    std::unique_ptr<datastore::kvdb::bitmap::IndexLoader> index_loader_;
 
     std::atomic_bool loading_{false};  // Whether we're in ETL loading phase
     std::string current_source_;       // Current source of data
@@ -62,32 +75,6 @@ class LogIndex : public Stage {
         std::map<Bytes, bool>& topics);
 
     void reset_log_progress();  // Clears out all logging vars
-
-    using cbor_function = std::function<void(unsigned char*, int)>;
-    class CborListener : public cbor::listener {
-      public:
-        explicit CborListener(cbor_function& on_bytes_function) : on_bytes_function_{on_bytes_function} {};
-
-        void on_integer(int) override {}
-        void on_bytes(unsigned char* data, int size) override { on_bytes_function_(data, size); };
-        void on_string(std::string&) override {}
-        void on_array(int) override {}
-        void on_map(int) override {}
-        void on_tag(unsigned int) override {}
-        void on_special(unsigned int) override {}
-        void on_bool(bool) override {}
-        void on_null() override {}
-        void on_undefined() override {}
-        void on_error(const char*) override { throw std::runtime_error("Unexpected CBOR decoding error"); }
-        void on_extra_integer(unsigned long long, int) override {}
-        void on_extra_tag(unsigned long long) override {}
-        void on_extra_special(unsigned long long) override {}
-        void on_double(double) override {}
-        void on_float32(float) override {}
-
-      private:
-        cbor_function& on_bytes_function_;
-    };
 };
 
 }  // namespace silkworm::stagedsync

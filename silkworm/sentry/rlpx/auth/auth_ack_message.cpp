@@ -23,23 +23,22 @@
 #include <silkworm/infra/common/decoding_exception.hpp>
 #include <silkworm/sentry/common/random.hpp>
 
+#include "auth_message_error.hpp"
 #include "ecies_cipher.hpp"
 
 namespace silkworm::sentry::rlpx::auth {
 
-const uint8_t AuthAckMessage::version = 4;
-
 AuthAckMessage::AuthAckMessage(
-    common::EccPublicKey initiator_public_key,
-    common::EccPublicKey ephemeral_public_key)
+    EccPublicKey initiator_public_key,
+    EccPublicKey ephemeral_public_key)
     : initiator_public_key_(std::move(initiator_public_key)),
       ephemeral_public_key_(std::move(ephemeral_public_key)),
-      nonce_(common::random_bytes(32)) {
+      nonce_(random_bytes(32)) {
 }
 
 AuthAckMessage::AuthAckMessage(
     ByteView data,
-    const common::EccKeyPair& initiator_key_pair)
+    const EccKeyPair& initiator_key_pair)
     : initiator_public_key_(initiator_key_pair.public_key()),
       ephemeral_public_key_(Bytes{}) {
     init_from_rlp(AuthAckMessage::decrypt_body(data, initiator_key_pair.private_key()));
@@ -47,7 +46,7 @@ AuthAckMessage::AuthAckMessage(
 
 Bytes AuthAckMessage::body_as_rlp() const {
     Bytes data;
-    rlp::encode(data, ephemeral_public_key_.serialized(), nonce_, version);
+    rlp::encode(data, ephemeral_public_key_.serialized(), nonce_, kVersion);
     return data;
 }
 
@@ -55,9 +54,9 @@ void AuthAckMessage::init_from_rlp(ByteView data) {
     Bytes public_key_data;
     auto result = rlp::decode(data, rlp::Leftover::kAllow, public_key_data, nonce_);
     if (!result && (result.error() != DecodingError::kUnexpectedListElements)) {
-        throw DecodingException(result.error(), "Failed to decode AuthAckMessage RLP");
+        throw AuthMessageErrorBadRLP(AuthMessageType::kAuthAck, result.error());
     }
-    ephemeral_public_key_ = common::EccPublicKey::deserialize(public_key_data);
+    ephemeral_public_key_ = EccPublicKey::deserialize(public_key_data);
 }
 
 Bytes AuthAckMessage::serialize_size(size_t body_size) {
@@ -68,7 +67,11 @@ Bytes AuthAckMessage::serialize_size(size_t body_size) {
 
 Bytes AuthAckMessage::decrypt_body(ByteView data, ByteView initiator_private_key) {
     Bytes size = serialize_size(data.size());
-    return EciesCipher::decrypt(data, initiator_private_key, size);
+    try {
+        return EciesCipher::decrypt(data, initiator_private_key, size);
+    } catch (const EciesCipherError& ex) {
+        throw AuthMessageErrorDecryptFailure(AuthMessageType::kAuthAck, Bytes{data}, ex);
+    }
 }
 
 Bytes AuthAckMessage::serialize() const {

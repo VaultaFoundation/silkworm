@@ -23,9 +23,12 @@
 
 #include <silkworm/infra/concurrency/task.hpp>
 
+#include <absl/strings/str_cat.h>
+
 #include <silkworm/sentry/common/ecc_key_pair.hpp>
 #include <silkworm/sentry/common/ecc_public_key.hpp>
 #include <silkworm/sentry/common/socket_stream.hpp>
+#include <silkworm/sentry/rlpx/common/disconnect_reason.hpp>
 #include <silkworm/sentry/rlpx/framing/message_stream.hpp>
 
 #include "auth_keys.hpp"
@@ -36,11 +39,11 @@ namespace silkworm::sentry::rlpx::auth {
 class Handshake {
   public:
     explicit Handshake(
-        common::EccKeyPair node_key,
+        EccKeyPair node_key,
         std::string client_id,
         uint16_t node_listen_port,
         std::pair<std::string, uint8_t> required_capability,
-        std::optional<common::EccPublicKey> peer_public_key)
+        std::optional<EccPublicKey> peer_public_key)
         : node_key_(std::move(node_key)),
           client_id_(std::move(client_id)),
           node_listen_port_(node_listen_port),
@@ -50,26 +53,41 @@ class Handshake {
 
     struct HandshakeResult {
         framing::MessageStream message_stream;
-        common::EccPublicKey peer_public_key;
+        EccPublicKey peer_public_key;
         HelloMessage hello_reply_message;
     };
 
-    Task<HandshakeResult> execute(common::SocketStream& stream);
+    Task<HandshakeResult> execute(SocketStream& stream);
 
     class DisconnectError : public std::runtime_error {
       public:
-        DisconnectError() : std::runtime_error("rlpx::auth::Handshake: Disconnect received") {}
+        explicit DisconnectError(DisconnectReason reason)
+            : std::runtime_error("rlpx::auth::Handshake: Disconnect received"),
+              reason_(reason) {}
+        DisconnectReason reason() const { return reason_; }
+
+      private:
+        DisconnectReason reason_;
+    };
+
+    class CapabilityMismatchError : public std::runtime_error {
+      public:
+        CapabilityMismatchError(
+            const std::string& required_capability_desc,
+            const std::string& peer_capabilities_desc)
+            : std::runtime_error(absl::StrCat("rlpx::auth::Handshake: no matching required capability ",
+                                              required_capability_desc, " in ", peer_capabilities_desc)) {}
     };
 
   private:
-    Task<AuthKeys> auth(common::SocketStream& stream);
+    Task<AuthKeys> auth(SocketStream& stream);
 
-    common::EccKeyPair node_key_;
+    EccKeyPair node_key_;
     std::string client_id_;
     uint16_t node_listen_port_;
     std::pair<std::string, uint8_t> required_capability_;
     const bool is_initiator_;
-    std::optional<common::EccPublicKey> peer_public_key_;
+    std::optional<EccPublicKey> peer_public_key_;
 };
 
 }  // namespace silkworm::sentry::rlpx::auth

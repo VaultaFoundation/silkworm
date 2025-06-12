@@ -16,14 +16,17 @@
 
 #pragma once
 
-#include <silkworm/infra/concurrency/idle_strategy.hpp>
+#include <cstdint>
+#include <thread>
 
 namespace silkworm::concurrency {
 
+//! Default number of threads to use for I/O tasks
+inline const uint32_t kDefaultNumContexts{std::thread::hardware_concurrency() / 2};
+
 //! The configuration settings for \refitem ContextPool
 struct ContextPoolSettings {
-    uint32_t num_contexts{std::thread::hardware_concurrency() / 2};  // The number of execution contexts to activate
-    WaitMode wait_mode{WaitMode::blocking};                          // The waiting strategy when context has no work
+    uint32_t num_contexts{kDefaultNumContexts};  // The number of execution contexts to activate
 };
 
 }  // namespace silkworm::concurrency

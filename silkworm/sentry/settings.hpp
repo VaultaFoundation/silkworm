@@ -23,6 +23,7 @@
 #include <vector>
 
 #include <silkworm/core/common/base.hpp>
+#include <silkworm/core/common/bytes.hpp>
 #include <silkworm/infra/common/log.hpp>
 #include <silkworm/infra/concurrency/context_pool_settings.hpp>
 #include <silkworm/sentry/common/enode_url.hpp>
@@ -34,7 +35,7 @@ struct buildinfo;
 namespace silkworm::sentry {
 
 struct Settings {
-    const buildinfo* build_info{nullptr};
+    std::string client_id{"silkworm"};
     log::Settings log_settings;
 
     std::string api_address{"127.0.0.1:9091"};
@@ -49,11 +50,14 @@ struct Settings {
 
     std::filesystem::path data_dir_path;
 
+    uint64_t network_id{1};
+
     std::optional<std::variant<std::filesystem::path, Bytes>> node_key;
 
-    std::vector<common::EnodeUrl> static_peers;
+    std::vector<EnodeUrl> static_peers;
+    std::vector<EnodeUrl> bootnodes;
 
-    bool no_discover{true};
+    bool no_discover{false};
 
     size_t max_peers{100};
 };

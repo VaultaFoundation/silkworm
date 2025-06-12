@@ -57,11 +57,8 @@ Directory::Directory(const std::filesystem::path& directory_path, bool must_crea
     }
 }
 
-bool Directory::is_pristine() const {
-    if (!exists()) {
-        return false;
-    }
-    return std::filesystem::is_empty(path_);
+bool Directory::is_empty() const {
+    return exists() && std::filesystem::is_empty(path_);
 }
 
 const std::filesystem::path& Directory::path() const { return path_; }
@@ -129,7 +126,7 @@ DataDirectory DataDirectory::from_chaindata(const std::filesystem::path& chainda
     }
 
     std::string base_path_str{};
-    for (size_t i = 0; i < tokens.size() - 1; i++) {
+    for (size_t i = 0; i < tokens.size() - 1; ++i) {
         base_path_str += tokens.at(i) + delimiter;
     }
 
@@ -138,7 +135,8 @@ DataDirectory DataDirectory::from_chaindata(const std::filesystem::path& chainda
 
 std::filesystem::path silkworm::DataDirectory::get_default_storage_path() {
     std::string base_dir_str{};
-    const char* env{std::getenv("XDG_DATA_HOME")};
+    // C++11 guarantees some thread safety for std::getenv
+    const char* env{std::getenv("XDG_DATA_HOME")};  // NOLINT(concurrency-mt-unsafe)
     if (env) {
         // Got storage path from docker
         base_dir_str.assign(env);
@@ -148,7 +146,7 @@ std::filesystem::path silkworm::DataDirectory::get_default_storage_path() {
 #else
         std::string env_name{"HOME"};
 #endif
-        env = std::getenv(env_name.c_str());
+        env = std::getenv(env_name.c_str());  // NOLINT(concurrency-mt-unsafe)
         if (!env) {
             // We don't actually know where to store data
             // fallback to current directory
@@ -179,9 +177,10 @@ std::filesystem::path silkworm::DataDirectory::get_default_storage_path() {
 void DataDirectory::deploy() {
     Directory::create();
     chaindata_.create();
-    etl_.create();
-    etl_.clear();
     nodes_.create();
+    snapshots_.create();
+    temp_.create();
+    temp_.clear();
 }
 
 std::filesystem::path TemporaryDirectory::get_os_temporary_path() { return std::filesystem::temp_directory_path(); }

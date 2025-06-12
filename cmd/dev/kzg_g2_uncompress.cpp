@@ -38,14 +38,14 @@ int main() {
     using namespace silkworm;
 
     // KZG_SETUP_G2[1], see
-    // https://github.com/ethereum/consensus-specs/blob/dev/specs/deneb/polynomial-commitments.md#trusted-setup
-    static const Bytes kKzgSetupG2_1{*from_hex(
-        "99aca9fb2f7760cecb892bf7262c176b334824f5727f680bba701a33e322cb6667531410dfc7c8e4321a3f0ea8af48cb1436638a2093123f046f0f504cc2a864825542873edbbc5d7ed17af125a4f2cf6433c6f4f61b81173726981dd989761d")};
+    // https://github.com/ethereum/consensus-specs/blob/dev/presets/mainnet/trusted_setups/trusted_setup_4096.json
+    static const Bytes kKzgSetupG2{*from_hex(
+        "b5bfd7dd8cdeb128843bc287230af38926187075cbfbefa81009a2ce615ac53d2914e5870cb452d2afaaab24f3499f72185cbfee53492714734429b7b38608e23926c911cceceac9a36851477ba4c60b087041de621000edc98edada20c1def2")};
 
-    SILKWORM_ASSERT(kKzgSetupG2_1.length() == 96);
+    SILKWORM_ASSERT(kKzgSetupG2.length() == 96);
 
     blst_p2_affine g2_affine;
-    SILKWORM_ASSERT(blst_p2_uncompress(&g2_affine, kKzgSetupG2_1.data()) == BLST_SUCCESS);
+    SILKWORM_ASSERT(blst_p2_uncompress(&g2_affine, kKzgSetupG2.data()) == BLST_SUCCESS);
     blst_p2 out;
     blst_p2_from_affine(&out, &g2_affine);
 
@@ -62,5 +62,5 @@ int main() {
     print_blst_fp(out.z.fp[0]);
     std::cout << ",\n  ";
     print_blst_fp(out.z.fp[1]);
-    std::cout << "}}" << std::endl;
+    std::cout << "}}\n";
 }

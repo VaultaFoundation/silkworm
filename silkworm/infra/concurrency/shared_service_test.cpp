@@ -17,14 +17,14 @@
 #include "shared_service.hpp"
 
 #include <boost/asio/io_context.hpp>
-#include <catch2/catch.hpp>
+#include <catch2/catch_test_macros.hpp>
 
 namespace silkworm {
 
 TEST_CASE("SharedService", "[silkworm][infra][concurrency][services]") {
     struct Integer {
         explicit Integer(int value) : value_(value) {}
-        [[nodiscard]] int value() const { return value_; }
+        int value() const { return value_; }
 
       private:
         int value_{0};

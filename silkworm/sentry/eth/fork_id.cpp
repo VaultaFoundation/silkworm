@@ -47,15 +47,15 @@ ForkId::ForkId(uint32_t hash, BlockNum next)
 
 ForkId::ForkId(
     ByteView genesis_hash,
-    const std::vector<BlockNum>& fork_block_numbers,
+    const std::vector<BlockNum>& fork_block_nums,
     const std::vector<BlockTime>& fork_block_times,
     BlockNum head_block_num) : ForkId() {
     uint32_t hash = crc32_fast(genesis_hash.data(), genesis_hash.size());
     endian::store_big_u32(hash_bytes_.data(), hash);
 
-    // Both fork_block_numbers and fork_block_times are sorted in ascending order
+    // Both fork_block_nums and fork_block_times are sorted in ascending order
     // First fork block time (Shanghai) is greater than last fork block number
-    std::vector<uint64_t> fork_points{fork_block_numbers};
+    std::vector<uint64_t> fork_points{fork_block_nums};
     fork_points.insert(fork_points.end(), fork_block_times.cbegin(), fork_block_times.cend());
     for (uint64_t fork : fork_points) {
         if (fork > head_block_num) {
@@ -91,14 +91,30 @@ ForkId ForkId::rlp_decode(ByteView data) {
     return value;
 }
 
+Bytes ForkId::rlp_encode_enr_entry() const {
+    Bytes data;
+    rlp::encode(data, std::vector<rlp::RlpBytes>{rlp::RlpBytes{rlp_encode()}});
+    return data;
+}
+
+ForkId ForkId::rlp_decode_enr_entry(ByteView data) {
+    std::vector<rlp::RlpByteView> list;
+    success_or_throw(rlp::decode(data, list), "Failed to decode ForkId ENR entry RLP: no wrapping list");
+
+    if (list.empty())
+        throw DecodingException(DecodingError::kUnexpectedListElements, "Failed to decode ForkId ENR entry RLP: wrapping list is empty");
+
+    return rlp_decode(list[0].data);
+}
+
 bool ForkId::is_compatible_with(
     ByteView genesis_hash,
-    const std::vector<BlockNum>& fork_block_numbers,
+    const std::vector<BlockNum>& fork_block_nums,
     const std::vector<BlockTime>& fork_block_times,
     BlockNum head_block_num) const {
-    // Both fork_block_numbers and fork_block_times are sorted in ascending order
+    // Both fork_block_nums and fork_block_times are sorted in ascending order
     // First fork block time (Shanghai) is greater than last fork block number
-    std::vector<uint64_t> fork_points{fork_block_numbers};
+    std::vector<uint64_t> fork_points{fork_block_nums};
     fork_points.insert(fork_points.end(), fork_block_times.cbegin(), fork_block_times.cend());
 
     // common_fork is a fork block point with a matching hash (or 0 if we are at genesis)

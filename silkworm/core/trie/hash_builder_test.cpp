@@ -16,13 +16,15 @@
 
 #include <iterator>
 
-#include <catch2/catch.hpp>
+#include <catch2/catch_test_macros.hpp>
 #include <ethash/keccak.hpp>
 
+#include <silkworm/core/common/empty_hashes.hpp>
 #include <silkworm/core/common/util.hpp>
 #include <silkworm/core/rlp/encode.hpp>
 #include <silkworm/core/trie/hash_builder.hpp>
 #include <silkworm/core/trie/nibbles.hpp>
+#include <silkworm/core/types/evmc_bytes32.hpp>
 
 namespace silkworm::trie {
 
@@ -32,15 +34,15 @@ TEST_CASE("Empty trie") {
 }
 
 TEST_CASE("HashBuilder1") {
-    const auto key1{0x0000000000000000000000000000000000000000000000000000000000000001_bytes32};
-    const auto key2{0x0000000000000000000000000000000000000000000000000000000000000002_bytes32};
+    const evmc::bytes32 key1{0x0000000000000000000000000000000000000000000000000000000000000001_bytes32};
+    const evmc::bytes32 key2{0x0000000000000000000000000000000000000000000000000000000000000002_bytes32};
 
-    const auto val1{*from_hex("01")};
-    const auto val2{*from_hex("02")};
+    const Bytes val1{*from_hex("01")};
+    const Bytes val2{*from_hex("02")};
 
     HashBuilder hb;
-    hb.add_leaf(unpack_nibbles(key1), val1);
-    hb.add_leaf(unpack_nibbles(key2), val2);
+    hb.add_leaf(unpack_nibbles(key1.bytes), val1);
+    hb.add_leaf(unpack_nibbles(key2.bytes), val2);
 
     // even terminating
     const Bytes encoded_empty_terminating_path{*from_hex("20")};
@@ -191,7 +193,7 @@ TEST_CASE("HashBuilder3") {
 */
 
 TEST_CASE("Known root hash") {
-    static constexpr auto root_hash{0x9fa752911d55c3a1246133fe280785afbdba41f357e9cae1131d5f5b0a078b9c_bytes32};
+    const evmc::bytes32 root_hash{0x9fa752911d55c3a1246133fe280785afbdba41f357e9cae1131d5f5b0a078b9c_bytes32};
     HashBuilder hb;
     hb.add_branch_node({}, root_hash);
     CHECK(to_hex(hb.root_hash()) == to_hex(root_hash.bytes));

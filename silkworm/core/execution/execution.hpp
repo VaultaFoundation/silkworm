@@ -23,32 +23,60 @@
 #include <silkworm/core/protocol/rule_set.hpp>
 #include <silkworm/core/state/state.hpp>
 #include <silkworm/core/types/block.hpp>
+#include <silkworm/core/types/call_traces.hpp>
 #include <silkworm/core/types/receipt.hpp>
 
 namespace silkworm {
 
-/** @brief Executes a given block and writes resulting changes into the state.
- *
- * Preconditions:
- *  validate_block_header & pre_validate_block_body must return kOk;
- *  transaction senders must be already populated.
- *
- * Warning: This method does not verify state root;
- * pre-Byzantium receipt root isn't validated either.
- *
- * For better performance use ExecutionProcessor directly and set EVM state_pool & analysis_cache.
- *
- * @param state The Ethereum state at the beginning of the block.
+/**
+ * @brief Execute a given block, write resulting changes into the state and return the transaction receipts.
+ * @precondition validate_block_header & pre_validate_block_body must return kOk; transaction senders must be already populated.
+ * @warning This method does not verify state root; pre-Byzantium receipt root isn't validated either.
+ * @warning For better performance use ExecutionProcessor directly and set EVM state_pool and analysis_cache.
+ * @param block The block to execute.
+ * @param state The chain state at the beginning of the block.
+ * @param chain_config The configuration parameters for the chain.
+ * @param receipts The transaction receipts produced by block execution.
  */
-[[nodiscard]] inline ValidationResult execute_block(const Block& block, State& state,
-                                                    const ChainConfig& chain_config, const evmone::gas_parameters& gas_params, const gas_prices_t& gas_prices) noexcept {
-    auto rule_set{protocol::rule_set_factory(chain_config)};
+inline ValidationResult execute_block(
+    const Block& block,
+    State& state,
+    const ChainConfig& chain_config,
+    std::vector<Receipt>& receipts,
+    const evmone::gas_parameters& gas_params,
+    const evmone::eosevm::gas_prices& gas_prices) noexcept {
+    const auto rule_set{protocol::rule_set_factory(chain_config)};
     if (!rule_set) {
         return ValidationResult::kUnknownProtocolRuleSet;
     }
-    ExecutionProcessor processor{block, *rule_set, state, chain_config, gas_prices};
+    ExecutionProcessor processor{block, *rule_set, state, chain_config, true, gas_params, gas_prices};
+
+    if (const ValidationResult res = processor.execute_block(receipts); res != ValidationResult::kOk) {
+        return res;
+    }
+
+    processor.flush_state();
+
+    return ValidationResult::kOk;
+}
+
+/**
+ * @brief Execute a given block and write resulting changes into the state.
+ * @precondition validate_block_header & pre_validate_block_body must return kOk; transaction senders must be already populated.
+ * @warning This method does not verify state root; pre-Byzantium receipt root isn't validated either.
+ * @warning For better performance use ExecutionProcessor directly and set EVM state_pool and analysis_cache.
+ * @param block The block to execute.
+ * @param state The chain state at the beginning of the block.
+ * @param chain_config The configuration parameters for the chain.
+ */
+inline ValidationResult execute_block(
+    const Block& block,
+    State& state,
+    const ChainConfig& chain_config,
+    const evmone::gas_parameters& gas_params,
+    const evmone::eosevm::gas_prices& gas_prices) noexcept {
     std::vector<Receipt> receipts;
-    return processor.execute_and_write_block(receipts, gas_params);
+    return execute_block(block, state, chain_config, receipts, gas_params, gas_prices);
 }
 
 }  // namespace silkworm

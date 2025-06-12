@@ -14,116 +14,59 @@
    limitations under the License.
 ]]
 
-find_package(absl REQUIRED)
+include("${SILKWORM_MAIN_DIR}/cmake/common/targets.cmake")
+
+add_subdirectory(execution/block)
+add_subdirectory(stagedsync/stages)
+
+find_package(absl REQUIRED COMPONENTS strings)
 find_package(asio-grpc REQUIRED)
-find_package(Boost REQUIRED container thread)
-find_package(nlohmann_json REQUIRED)
+find_package(Boost REQUIRED COMPONENTS headers)
 find_package(gRPC REQUIRED)
+find_package(GTest REQUIRED)
 find_package(magic_enum REQUIRED)
+find_package(Microsoft.GSL REQUIRED)
 find_package(Protobuf REQUIRED)
-find_package(roaring REQUIRED)
-find_package(tomlplusplus REQUIRED)
 
-# Generate source files containing snapshot TOML files as binary data
-set(SILKWORM_EMBED embed)
-find_package(CLI11 REQUIRED)
-add_executable(${SILKWORM_EMBED} ${SILKWORM_MAIN_DIR}/cmd/dev/embed.cpp)
-target_link_libraries(${SILKWORM_EMBED} PRIVATE CLI11::CLI11 Boost::headers)
-
-set(SILKWORM_TOML_SRC_DIR "${SILKWORM_MAIN_DIR}/third_party/erigon-snapshot")
-set(SILKWORM_TOML_SRC
-    ${SILKWORM_TOML_SRC_DIR}/bor-mainnet.toml
-    ${SILKWORM_TOML_SRC_DIR}/bsc.toml
-    ${SILKWORM_TOML_SRC_DIR}/gnosis.toml
-    ${SILKWORM_TOML_SRC_DIR}/goerli.toml
-    ${SILKWORM_TOML_SRC_DIR}/mainnet.toml
-    ${SILKWORM_TOML_SRC_DIR}/mumbai.toml
-    ${SILKWORM_TOML_SRC_DIR}/ropsten.toml
-    ${SILKWORM_TOML_SRC_DIR}/sepolia.toml
-)
-set(SILKWORM_TOML_CPP_SRC_DIR "${SILKWORM_MAIN_SRC_DIR}/node/snapshot/config")
-set(SILKWORM_TOML_CPP_SRC
-    ${SILKWORM_TOML_CPP_SRC_DIR}/bor_mainnet.cpp
-    ${SILKWORM_TOML_CPP_SRC_DIR}/bsc.cpp
-    ${SILKWORM_TOML_CPP_SRC_DIR}/gnosis.cpp
-    ${SILKWORM_TOML_CPP_SRC_DIR}/goerli.cpp
-    ${SILKWORM_TOML_CPP_SRC_DIR}/mainnet.cpp
-    ${SILKWORM_TOML_CPP_SRC_DIR}/mumbai.cpp
-    ${SILKWORM_TOML_CPP_SRC_DIR}/ropsten.cpp
-    ${SILKWORM_TOML_CPP_SRC_DIR}/sepolia.cpp
+set(SILKWORM_NODE_PUBLIC_LIBS
+    silkworm_block_execution
+    silkworm_core
+    silkworm_db
+    silkworm_infra
+    silkworm_sentry
+    silkworm_snapshots
+    asio-grpc::asio-grpc
+    Boost::headers
+    gRPC::grpc++
+    protobuf::libprotobuf
 )
 
-add_custom_command(
-  OUTPUT "${SILKWORM_TOML_CPP_SRC}"
-  COMMAND "${SILKWORM_EMBED}" ARGS -i "${SILKWORM_TOML_SRC_DIR}" -o "${SILKWORM_TOML_CPP_SRC_DIR}" -e ".toml" -s "toml"
-  DEPENDS "${SILKWORM_EMBED}"
+set(SILKWORM_NODE_PRIVATE_LIBS
+    absl::strings
+    evmone
+    magic_enum::magic_enum
+    Microsoft.GSL::GSL
+    silkworm_datastore_etl
+    silkworm_execution
+    silkworm_interfaces
+    silkworm_stages
+    silkworm_sync
 )
 
-add_custom_target(generate_toml DEPENDS "${SILKWORM_TOML_SRC}" "${SILKWORM_EMBED}")
-
-file(
-  GLOB_RECURSE
-  SILKWORM_NODE_SRC
-  CONFIGURE_DEPENDS
-  "*.cpp"
-  "*.hpp"
-  "*.c"
-  "*.h"
-  "*.cc"
+silkworm_library(
+  silkworm_node
+  PUBLIC ${SILKWORM_NODE_PUBLIC_LIBS}
+  PRIVATE ${SILKWORM_NODE_PRIVATE_LIBS}
 )
-list(FILTER SILKWORM_NODE_SRC EXCLUDE REGEX "_test\\.cpp$")
-list(FILTER SILKWORM_NODE_SRC EXCLUDE REGEX "_benchmark\\.cpp$")
-
-add_library(silkworm_node "${SILKWORM_NODE_SRC}" "${SILKWORM_TOML_CPP_SRC}")
-
-add_dependencies(silkworm_node generate_toml)
-
-# Suppress ASAN/TSAN in gRPC to avoid ODR violation when building Silkworm with sanitizers See
-# https://github.com/grpc/grpc/issues/19224
-if(SILKWORM_SANITIZE)
-  target_compile_definitions(silkworm_node PRIVATE GRPC_ASAN_SUPPRESSED GRPC_TSAN_SUPPRESSED)
-endif()
 
 if(WITH_SOFT_FORKS)
   target_compile_definitions(silkworm_node PRIVATE WITH_SOFT_FORKS)
 endif()
 
-target_include_directories(silkworm_node PUBLIC "${SILKWORM_MAIN_DIR}")
+# silkworm_node_cli depends on silkworm_node
+add_subdirectory(cli)
 
-set(SILKWORM_NODE_PUBLIC_LIBS
-    eos_evm
-    silkworm_core
-    silkworm_infra
-    silkworm_sentry
-    absl::btree
-    absl::flat_hash_map
-    absl::flat_hash_set
-    asio-grpc::asio-grpc
-    Boost::container
-    Boost::thread
-    gRPC::grpc++
-    mdbx-static
-    nlohmann_json::nlohmann_json
-    protobuf::libprotobuf
-    roaring::roaring
-    torrent-rasterbar
-)
+# silkworm_node_test_util depends on silkworm_node
+add_subdirectory(test_util)
 
-# cmake-format: off
-set(SILKWORM_NODE_PRIVATE_LIBS
-    cborcpp
-    evmone
-    magic_enum::magic_enum
-    silkworm_interfaces
-    tomlplusplus::tomlplusplus
-)
-# cmake-format: on
-if(MSVC)
-  list(APPEND SILKWORM_NODE_PRIVATE_LIBS ntdll.lib)
-endif(MSVC)
-
-target_link_libraries(
-  silkworm_node
-  PUBLIC ${SILKWORM_NODE_PUBLIC_LIBS}
-  PRIVATE ${SILKWORM_NODE_PRIVATE_LIBS}
-)
+target_link_libraries(silkworm_node_test PRIVATE silkworm_node_test_util GTest::gmock)

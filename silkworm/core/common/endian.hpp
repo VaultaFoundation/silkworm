@@ -27,9 +27,12 @@ See https://en.wikipedia.org/wiki/Endianness
 #include <intx/intx.hpp>
 
 #include <silkworm/core/common/base.hpp>
+#include <silkworm/core/common/bytes.hpp>
 #include <silkworm/core/common/decoding_result.hpp>
 
 namespace silkworm::endian {
+
+// NOLINTBEGIN(readability-identifier-naming)
 
 // Similar to boost::endian::load_big_u16
 const auto load_big_u16 = intx::be::unsafe::load<uint16_t>;
@@ -58,6 +61,17 @@ const auto store_big_u32 = intx::be::unsafe::store<uint32_t>;
 // Similar to boost::endian::store_big_u64
 const auto store_big_u64 = intx::be::unsafe::store<uint64_t>;
 
+// Similar to boost::endian::store_little_u16
+const auto store_little_u16 = intx::le::unsafe::store<uint16_t>;
+
+// Similar to boost::endian::store_little_u32
+const auto store_little_u32 = intx::le::unsafe::store<uint32_t>;
+
+// Similar to boost::endian::store_little_u64
+const auto store_little_u64 = intx::le::unsafe::store<uint64_t>;
+
+// NOLINTEND(readability-identifier-naming)
+
 //! \brief Transforms a uint64_t stored in memory with native endianness to it's compacted big endian byte form
 //! \param [in] value : the value to be transformed
 //! \return A ByteView (std::string_view) into an internal static buffer (thread specific) of the function
@@ -83,7 +97,7 @@ ByteView to_big_compact(const intx::uint256& value);
 //! \return Success or kOverflow or kLeadingZero.
 //! \remarks A "compact" big endian form strips leftmost bytes valued to zero;
 //! if the input is not compact kLeadingZero is returned.
-template <typename T, std::enable_if_t<UnsignedIntegral<T>, int> = 1>
+template <UnsignedIntegral T>
 static DecodingResult from_big_compact(ByteView data, T& out) {
     if (data.length() > sizeof(T)) {
         return tl::unexpected{DecodingError::kOverflow};

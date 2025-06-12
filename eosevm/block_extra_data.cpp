@@ -1,15 +1,9 @@
 #include <silkworm/core/rlp/encode.hpp>
 #include <silkworm/core/rlp/decode.hpp>
-
+#include <silkworm/core/types/evmc_bytes32.hpp>
 #include <eosevm/block_extra_data.hpp>
 
 using namespace silkworm;
-
-namespace eosevm {
-    bool operator==(const eosevm::block_extra_data& a, const eosevm::block_extra_data& b) {
-        return a.consensus_parameter_index == b.consensus_parameter_index && a.gasprices == b.gasprices;
-    }
-}
 
 namespace silkworm { namespace rlp {
 
@@ -53,4 +47,5 @@ namespace silkworm { namespace rlp {
         }
         return {};
     }
+
 } }  //namespace silkworm::rlp

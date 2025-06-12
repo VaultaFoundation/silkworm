@@ -14,26 +14,39 @@
    limitations under the License.
 */
 
-#include <catch2/catch.hpp>
+#include <catch2/catch_test_macros.hpp>
 
+#include <silkworm/core/common/empty_hashes.hpp>
 #include <silkworm/core/trie/hash_builder.hpp>
 #include <silkworm/core/trie/nibbles.hpp>
 #include <silkworm/core/types/account.hpp>
-#include <silkworm/node/db/tables.hpp>
-#include <silkworm/node/etl/collector.hpp>
+#include <silkworm/core/types/address.hpp>
+#include <silkworm/core/types/evmc_bytes32.hpp>
+#include <silkworm/db/datastore/kvdb/etl_mdbx_collector.hpp>
+#include <silkworm/db/state/account_codec.hpp>
+#include <silkworm/db/tables.hpp>
+#include <silkworm/db/test_util/temp_chain_data.hpp>
 #include <silkworm/node/stagedsync/stages/stage_interhashes/trie_cursor.hpp>
 #include <silkworm/node/stagedsync/stages/stage_interhashes/trie_loader.hpp>
-#include <silkworm/node/test/context.hpp>
 
 namespace silkworm::trie {
 
+using namespace silkworm::db;
+using namespace silkworm::db::state;
+using namespace silkworm::datastore::kvdb;
+using datastore::kvdb::Collector;
+
+static ethash::hash256 keccak256(const evmc::address& address) {
+    return silkworm::keccak256(address.bytes);
+}
+
 TEST_CASE("Trie Cursor") {
-    test::Context db_context{};
+    test_util::TempChainData db_context{};
     auto txn{db_context.txn()};
 
     SECTION("Only root trie no changes") {
         trie::PrefixSet changed_accounts{};
-        db::PooledCursor trie_accounts(txn, db::table::kTrieOfAccounts);
+        PooledCursor trie_accounts(txn, table::kTrieOfAccounts);
         trie::TrieCursor ta_cursor{trie_accounts, &changed_accounts};
 
         Bytes k{};
@@ -50,7 +63,7 @@ TEST_CASE("Trie Cursor") {
             "b804061bfa46e86139874800ae6d6f9f79097ac8c221e9229d13a45a0864a3fda170863bb6513010e95cfdd3f4bb151c7d242a682a"
             "16041a426bea6de01aa9ed925e80d5fed57c302988")};
 
-        trie_accounts.insert(db::to_slice(k), db::to_slice(v));
+        trie_accounts.insert(to_slice(k), to_slice(v));
 
         auto ta_data{ta_cursor.to_prefix({})};
 
@@ -71,7 +84,7 @@ TEST_CASE("Trie Cursor") {
 
     SECTION("Only root trie with changes") {
         trie::PrefixSet changed_accounts{};
-        db::PooledCursor trie_accounts(txn, db::table::kTrieOfAccounts);
+        PooledCursor trie_accounts(txn, table::kTrieOfAccounts);
         trie::TrieCursor ta_cursor{trie_accounts, &changed_accounts};
 
         Bytes k{};
@@ -88,7 +101,7 @@ TEST_CASE("Trie Cursor") {
             "b804061bfa46e86139874800ae6d6f9f79097ac8c221e9229d13a45a0864a3fda170863bb6513010e95cfdd3f4bb151c7d242a682a"
             "16041a426bea6de01aa9ed925e80d5fed57c302988")};
 
-        trie_accounts.insert(db::to_slice(k), db::to_slice(v));
+        trie_accounts.insert(to_slice(k), to_slice(v));
         changed_accounts.insert(*from_hex("0x000001"));
 
         bool has_thrown{false};
@@ -103,9 +116,9 @@ TEST_CASE("Trie Cursor") {
     }
 
     SECTION("Root + child with changes") {
-        etl::Collector collector{db_context.dir().path()};
+        Collector collector{db_context.dir().path()};
         trie::PrefixSet changed_accounts{};
-        db::PooledCursor trie_accounts(txn, db::table::kTrieOfAccounts);
+        PooledCursor trie_accounts(txn, table::kTrieOfAccounts);
         trie::TrieCursor ta_cursor{trie_accounts, &changed_accounts, &collector};
 
         Bytes k{};
@@ -121,7 +134,7 @@ TEST_CASE("Trie Cursor") {
             "67beb3125b34103b14f16d88f9c68fc4516203fad53c3a2c405ef83201fee92bd4fb7cfb1022b46d6507c31957b94580926086c547"
             "b804061bfa46e86139874800ae6d6f9f79097ac8c221e9229d13a45a0864a3fda170863bb6513010e95cfdd3f4bb151c7d242a682a"
             "16041a426bea6de01aa9ed925e80d5fed57c302988")};
-        trie_accounts.insert(db::to_slice(k), db::to_slice(v));
+        trie_accounts.insert(to_slice(k), to_slice(v));
 
         k = *from_hex("0x00");
         v = *from_hex(
@@ -157,9 +170,9 @@ TEST_CASE("Trie Cursor") {
     }
 
     SECTION("Root + 16 children with changes") {
-        etl::Collector collector{db_context.dir().path()};
+        Collector collector{db_context.dir().path()};
         trie::PrefixSet changed_accounts{};
-        db::PooledCursor trie_accounts(txn, db::table::kTrieOfAccounts);
+        PooledCursor trie_accounts(txn, table::kTrieOfAccounts);
         trie::TrieCursor ta_cursor{trie_accounts, &changed_accounts, &collector};
 
         // Fake root node with no hashes and only tree mask (must descend to all)
@@ -170,7 +183,7 @@ TEST_CASE("Trie Cursor") {
             "0000" /* no hash mask */
             "061d711a452d9137600bc9a5fecb8fa8f4fe4496f232b0ec706c8fb601beff0b" /* root hash - must have it */)};
 
-        trie_accounts.insert(db::to_slice(k), db::to_slice(v));
+        trie_accounts.insert(to_slice(k), to_slice(v));
 
         // Generate 16 fake sub nodes - note root node above has all bits set in tree_mask
         v = *from_hex(
@@ -181,7 +194,7 @@ TEST_CASE("Trie Cursor") {
         for (uint8_t c{'\0'}; c < 0x10; ++c) {
             k.clear();
             k.push_back(c);
-            trie_accounts.insert(db::to_slice(k), db::to_slice(v));
+            trie_accounts.insert(to_slice(k), to_slice(v));
         }
 
         // Insert a change, so we don't get hash of root and
@@ -197,7 +210,7 @@ TEST_CASE("Trie Cursor") {
 
     SECTION("Empty prefixed trie no changes") {
         trie::PrefixSet changed_accounts{};
-        db::PooledCursor trie_storage(txn, db::table::kTrieOfStorage);
+        PooledCursor trie_storage(txn, table::kTrieOfStorage);
         trie::TrieCursor ts_cursor{trie_storage, &changed_accounts};
         Bytes prefix{*from_hex("0xfff2bcbbf823e72a3a9025c14b96f5c28026735aeb7f19e5f2f317aa7a017c080000000000000001")};
         auto ts_data{ts_cursor.to_prefix(prefix)};
@@ -220,7 +233,7 @@ TEST_CASE("Trie Cursor") {
 
     SECTION("Missing prefixed root no changes") {
         trie::PrefixSet changed_storage{};
-        db::PooledCursor trie_storage(txn, db::table::kTrieOfStorage);
+        PooledCursor trie_storage(txn, table::kTrieOfStorage);
 
         Bytes k{
             *from_hex("0xfff2bcbbf823e72a3a9025c14b96f5c28026735aeb7f19e5f2f317aa7a017c080000000000000001" /* prefix */
@@ -231,7 +244,7 @@ TEST_CASE("Trie Cursor") {
                       "0000" /* no hash mask */
                       )};
 
-        trie_storage.insert(db::to_slice(k), db::to_slice(v));
+        trie_storage.insert(to_slice(k), to_slice(v));
 
         trie::TrieCursor ts_cursor{trie_storage, &changed_storage};
         Bytes prefix{*from_hex("0xfff2bcbbf823e72a3a9025c14b96f5c28026735aeb7f19e5f2f317aa7a017c080000000000000001")};
@@ -295,28 +308,28 @@ TEST_CASE("Trie Cursor KeyIsBefore") {
 }
 
 static evmc::bytes32 setup_storage(mdbx::txn& txn, ByteView storage_key) {
-    static const std::vector<std::pair<evmc::bytes32, Bytes>> locations{
+    const std::vector<std::pair<evmc::bytes32, Bytes>> locations{
         {0x1200000000000000000000000000000000000000000000000000000000000000_bytes32, *from_hex("0x42")},
         {0x1400000000000000000000000000000000000000000000000000000000000000_bytes32, *from_hex("0x01")},
         {0x3000000000000000000000000000000000000000000000000000000000E00000_bytes32, *from_hex("0x127a89")},
         {0x3000000000000000000000000000000000000000000000000000000000E00001_bytes32, *from_hex("0x05")},
     };
 
-    db::PooledCursor hashed_storage(txn, db::table::kHashedStorage);
+    PooledCursor hashed_storage(txn, table::kHashedStorage);
     HashBuilder storage_hb;
     Bytes value_rlp{};
 
-    for (auto [location, value] : locations) {
-        db::upsert_storage_value(hashed_storage, storage_key, location, value);
+    for (const auto& [location, value] : locations) {
+        upsert_storage_value(hashed_storage, storage_key, location.bytes, value);
         value_rlp.clear();
         rlp::encode(value_rlp, value);
-        storage_hb.add_leaf(unpack_nibbles(location), value_rlp);
+        storage_hb.add_leaf(unpack_nibbles(location.bytes), value_rlp);
     }
 
     return storage_hb.root_hash();
 }
 
-static std::map<Bytes, Node> read_all_nodes(db::ROCursor& cursor) {
+static std::map<Bytes, Node> read_all_nodes(ROCursor& cursor) {
     cursor.to_first(/*throw_notfound=*/false);
     std::map<Bytes, Node> out;
     auto save_nodes{[&out](ByteView key, ByteView value) {
@@ -324,7 +337,7 @@ static std::map<Bytes, Node> read_all_nodes(db::ROCursor& cursor) {
         REQUIRE(Node::decode_from_storage(value, node));
         out.emplace(key, node);
     }};
-    db::cursor_for_each(cursor, save_nodes);
+    cursor_for_each(cursor, save_nodes);
     return out;
 }
 
@@ -336,10 +349,10 @@ static Bytes nibbles_from_hex(std::string_view s) {
     return unpacked;
 }
 
-static evmc::bytes32 increment_intermediate_hashes(db::ROTxn& txn, std::filesystem::path etl_path,
+static evmc::bytes32 increment_intermediate_hashes(ROTxn& txn, const std::filesystem::path& etl_path,
                                                    PrefixSet* account_changes, PrefixSet* storage_changes) {
-    etl::Collector account_trie_node_collector{etl_path};
-    etl::Collector storage_trie_node_collector{etl_path};
+    Collector account_trie_node_collector{etl_path};
+    Collector storage_trie_node_collector{etl_path};
 
     TrieLoader trie_loader(txn, account_changes, storage_changes, &account_trie_node_collector,
                            &storage_trie_node_collector);
@@ -347,23 +360,23 @@ static evmc::bytes32 increment_intermediate_hashes(db::ROTxn& txn, std::filesyst
     auto computed_root{trie_loader.calculate_root()};
 
     // Save collected node changes
-    db::PooledCursor target(txn, db::table::kTrieOfAccounts);
-    MDBX_put_flags_t flags{target.size() ? MDBX_put_flags_t::MDBX_UPSERT : MDBX_put_flags_t::MDBX_APPEND};
-    account_trie_node_collector.load(target, nullptr, flags);
+    PooledCursor account_cursor(txn, table::kTrieOfAccounts);
+    MDBX_put_flags_t flags{account_cursor.empty() ? MDBX_put_flags_t::MDBX_APPEND : MDBX_put_flags_t::MDBX_UPSERT};
+    account_trie_node_collector.load(account_cursor, nullptr, flags);
 
-    target.bind(txn, db::table::kTrieOfStorage);
-    flags = target.empty() ? MDBX_put_flags_t::MDBX_APPEND : MDBX_put_flags_t::MDBX_UPSERT;
-    storage_trie_node_collector.load(target, nullptr, flags);
+    PooledCursor storage_cursor(txn, table::kTrieOfStorage);
+    flags = storage_cursor.empty() ? MDBX_put_flags_t::MDBX_APPEND : MDBX_put_flags_t::MDBX_UPSERT;
+    storage_trie_node_collector.load(storage_cursor, nullptr, flags);
 
     return computed_root;
 }
 
-static evmc::bytes32 regenerate_intermediate_hashes(db::ROTxn& txn, std::filesystem::path etl_path) {
+static evmc::bytes32 regenerate_intermediate_hashes(ROTxn& txn, const std::filesystem::path& etl_path) {
     return increment_intermediate_hashes(txn, etl_path, nullptr, nullptr);
 }
 
 TEST_CASE("Account and storage trie") {
-    test::Context context;
+    test_util::TempChainData context;
     auto& txn{context.rw_txn()};
 
     // ----------------------------------------------------------------
@@ -371,64 +384,64 @@ TEST_CASE("Account and storage trie") {
     // in the big comment in intermediate_hashes.hpp
     // ----------------------------------------------------------------
 
-    auto hashed_accounts{db::open_cursor(txn, db::table::kHashedAccounts)};
+    auto hashed_accounts{open_cursor(txn, table::kHashedAccounts)};
 
     HashBuilder hb;
 
-    const auto key1{0xB000000000000000000000000000000000000000000000000000000000000000_bytes32};
-    const Account a1{0, 3 * kEther};
-    hashed_accounts.upsert(db::to_slice(key1), db::to_slice(a1.encode_for_storage()));
-    hb.add_leaf(unpack_nibbles(key1), a1.rlp(/*storage_root=*/kEmptyRoot));
+    const evmc::bytes32 key1{0xB000000000000000000000000000000000000000000000000000000000000000_bytes32};
+    const AccountEncodable a1{0, 3 * kEther};
+    hashed_accounts.upsert(to_slice(key1), to_slice(a1.encode_for_storage()));
+    hb.add_leaf(unpack_nibbles(key1.bytes), a1.rlp(/*storage_root=*/kEmptyRoot));
 
     // Some address whose hash starts with 0xB040
-    const auto address2{0x7db3e81b72d2695e19764583f6d219dbee0f35ca_address};
+    const evmc::address address2{0x7db3e81b72d2695e19764583f6d219dbee0f35ca_address};
     const auto key2{keccak256(address2)};
     REQUIRE((key2.bytes[0] == 0xB0 && key2.bytes[1] == 0x40));
-    const Account a2{0, 1 * kEther};
-    hashed_accounts.upsert(db::to_slice(key2.bytes), db::to_slice(a2.encode_for_storage()));
+    const AccountEncodable a2{0, 1 * kEther};
+    hashed_accounts.upsert(to_slice(key2.bytes), to_slice(a2.encode_for_storage()));
     hb.add_leaf(unpack_nibbles(key2.bytes), a2.rlp(/*storage_root=*/kEmptyRoot));
 
     // Some address whose hash starts with 0xB041
-    const auto address3{0x16b07afd1c635f77172e842a000ead9a2a222459_address};
+    const evmc::address address3{0x16b07afd1c635f77172e842a000ead9a2a222459_address};
     const auto key3{keccak256(address3)};
     REQUIRE((key3.bytes[0] == 0xB0 && key3.bytes[1] == 0x41));
-    const auto code_hash{0x5be74cad16203c4905c068b012a2e9fb6d19d036c410f16fd177f337541440dd_bytes32};
-    const Account a3{0, 2 * kEther, code_hash, kDefaultIncarnation};
-    hashed_accounts.upsert(db::to_slice(key3.bytes), db::to_slice(a3.encode_for_storage()));
+    const evmc::bytes32 code_hash{0x5be74cad16203c4905c068b012a2e9fb6d19d036c410f16fd177f337541440dd_bytes32};
+    const AccountEncodable a3{0, 2 * kEther, code_hash, kDefaultIncarnation};
+    hashed_accounts.upsert(to_slice(key3.bytes), to_slice(a3.encode_for_storage()));
 
-    Bytes storage_key{db::storage_prefix(key3.bytes, kDefaultIncarnation)};
+    Bytes storage_key{storage_prefix(key3.bytes, kDefaultIncarnation)};
     const evmc::bytes32 storage_root{setup_storage(txn, storage_key)};
 
     hb.add_leaf(unpack_nibbles(key3.bytes), a3.rlp(storage_root));
 
-    const auto key4a{0xB1A0000000000000000000000000000000000000000000000000000000000000_bytes32};
-    const Account a4a{0, 4 * kEther};
-    hashed_accounts.upsert(db::to_slice(key4a), db::to_slice(a4a.encode_for_storage()));
-    hb.add_leaf(unpack_nibbles(key4a), a4a.rlp(/*storage_root=*/kEmptyRoot));
+    const evmc::bytes32 key4a{0xB1A0000000000000000000000000000000000000000000000000000000000000_bytes32};
+    const AccountEncodable a4a{0, 4 * kEther};
+    hashed_accounts.upsert(to_slice(key4a), to_slice(a4a.encode_for_storage()));
+    hb.add_leaf(unpack_nibbles(key4a.bytes), a4a.rlp(/*storage_root=*/kEmptyRoot));
 
-    const auto key5{0xB310000000000000000000000000000000000000000000000000000000000000_bytes32};
-    const Account a5{0, 8 * kEther};
-    hashed_accounts.upsert(db::to_slice(key5), db::to_slice(a5.encode_for_storage()));
-    hb.add_leaf(unpack_nibbles(key5), a5.rlp(/*storage_root=*/kEmptyRoot));
+    const evmc::bytes32 key5{0xB310000000000000000000000000000000000000000000000000000000000000_bytes32};
+    const AccountEncodable a5{0, 8 * kEther};
+    hashed_accounts.upsert(to_slice(key5), to_slice(a5.encode_for_storage()));
+    hb.add_leaf(unpack_nibbles(key5.bytes), a5.rlp(/*storage_root=*/kEmptyRoot));
 
-    const auto key6{0xB340000000000000000000000000000000000000000000000000000000000000_bytes32};
-    const Account a6{0, 1 * kEther};
-    hashed_accounts.upsert(db::to_slice(key6), db::to_slice(a6.encode_for_storage()));
-    hb.add_leaf(unpack_nibbles(key6), a6.rlp(/*storage_root=*/kEmptyRoot));
+    const evmc::bytes32 key6{0xB340000000000000000000000000000000000000000000000000000000000000_bytes32};
+    const AccountEncodable a6{0, 1 * kEther};
+    hashed_accounts.upsert(to_slice(key6), to_slice(a6.encode_for_storage()));
+    hb.add_leaf(unpack_nibbles(key6.bytes), a6.rlp(/*storage_root=*/kEmptyRoot));
 
     // ----------------------------------------------------------------
     // Populate account & storage trie DB tables
     // ----------------------------------------------------------------
 
     evmc::bytes32 expected_root{hb.root_hash()};
-    evmc::bytes32 computed_root{regenerate_intermediate_hashes(txn, context.dir().etl().path())};
+    evmc::bytes32 computed_root{regenerate_intermediate_hashes(txn, context.dir().temp().path())};
     REQUIRE(to_hex(computed_root.bytes, true) == to_hex(expected_root.bytes, true));
 
     // ----------------------------------------------------------------
     // Check account trie
     // ----------------------------------------------------------------
 
-    db::PooledCursor account_trie(txn, db::table::kTrieOfAccounts);
+    PooledCursor account_trie(txn, table::kTrieOfAccounts);
     REQUIRE(account_trie.size() == 2);
 
     std::map<Bytes, Node> node_map{read_all_nodes(account_trie)};
@@ -456,7 +469,7 @@ TEST_CASE("Account and storage trie") {
     // Check storage trie
     // ----------------------------------------------------------------
 
-    db::PooledCursor storage_trie(txn, db::table::kTrieOfStorage);
+    PooledCursor storage_trie(txn, table::kTrieOfStorage);
     REQUIRE(storage_trie.size() == 1);
 
     node_map = read_all_nodes(storage_trie);
@@ -476,19 +489,19 @@ TEST_CASE("Account and storage trie") {
     // ----------------------------------------------------------------
 
     // Some address whose hash starts with 0xB1
-    const auto address4b{0x4f61f2d5ebd991b85aa1677db97307caf5215c91_address};
+    const evmc::address address4b{0x4f61f2d5ebd991b85aa1677db97307caf5215c91_address};
     const auto key4b{keccak256(address4b)};
     REQUIRE(key4b.bytes[0] == key4a.bytes[0]);
 
-    const Account a4b{0, 5 * kEther};
-    hashed_accounts.upsert(db::to_slice(key4b.bytes), db::to_slice(a4b.encode_for_storage()));
+    const AccountEncodable a4b{0, 5 * kEther};
+    hashed_accounts.upsert(to_slice(key4b.bytes), to_slice(a4b.encode_for_storage()));
 
     PrefixSet account_changes{};
     PrefixSet storage_changes{};
     account_changes.insert(unpack_nibbles(Bytes(&key4b.bytes[0], kHashLength)));
 
     expected_root = 0x8e263cd4eefb0c3cbbb14e5541a66a755cad25bcfab1e10dd9d706263e811b28_bytes32;
-    computed_root = increment_intermediate_hashes(txn, context.dir().etl().path(), &account_changes, &storage_changes);
+    computed_root = increment_intermediate_hashes(txn, context.dir().temp().path(), &account_changes, &storage_changes);
     REQUIRE(to_hex(computed_root.bytes, true) == to_hex(expected_root.bytes, true));
 
     node_map = read_all_nodes(account_trie);
@@ -512,24 +525,24 @@ TEST_CASE("Account and storage trie") {
         account_changes.clear();
         storage_changes.clear();
 
-        hashed_accounts.erase(db::to_slice(key2.bytes));
+        hashed_accounts.erase(to_slice(key2.bytes));
         account_changes.insert(unpack_nibbles(Bytes(&key2.bytes[0], kHashLength)));
         expected_root = 0x986b623eac8b26c8624cbaffaa60c1b48a7b88be1574bd98bd88391fc34c0a9c_bytes32;
 
         {
-            etl::Collector account_trie_node_collector{context.dir().etl().path()};
-            etl::Collector storage_trie_node_collector{context.dir().etl().path()};
+            Collector account_trie_node_collector{context.dir().temp().path()};
+            Collector storage_trie_node_collector{context.dir().temp().path()};
             TrieLoader trie_loader(txn, &account_changes, &storage_changes, &account_trie_node_collector,
                                    &storage_trie_node_collector);
             computed_root = trie_loader.calculate_root();
             REQUIRE(computed_root == expected_root);
 
             // Save collected node changes
-            db::PooledCursor target(txn, db::table::kTrieOfAccounts);
-            MDBX_put_flags_t flags{target.size() ? MDBX_put_flags_t::MDBX_UPSERT : MDBX_put_flags_t::MDBX_APPEND};
+            PooledCursor target(txn, table::kTrieOfAccounts);
+            MDBX_put_flags_t flags{target.empty() ? MDBX_put_flags_t::MDBX_APPEND : MDBX_put_flags_t::MDBX_UPSERT};
             account_trie_node_collector.load(target, nullptr, flags);
 
-            target.bind(txn, db::table::kTrieOfStorage);
+            target.bind(txn, table::kTrieOfStorage);
             flags = target.empty() ? MDBX_put_flags_t::MDBX_APPEND : MDBX_put_flags_t::MDBX_UPSERT;
             storage_trie_node_collector.load(target, nullptr, flags);
         }
@@ -556,15 +569,15 @@ TEST_CASE("Account and storage trie") {
         account_changes.clear();
         storage_changes.clear();
 
-        hashed_accounts.erase(db::to_slice(key2.bytes));
+        hashed_accounts.erase(to_slice(key2.bytes));
         account_changes.insert(unpack_nibbles(Bytes(&key2.bytes[0], kHashLength)));
 
-        hashed_accounts.erase(db::to_slice(key3.bytes));
+        hashed_accounts.erase(to_slice(key3.bytes));
         account_changes.insert(unpack_nibbles(Bytes(&key3.bytes[0], kHashLength)));
 
         expected_root = 0xaa953dc994f3375a95f2c413ed5a1a5a2f84d34b377d7587e3aa8dba944c12bf_bytes32;
         computed_root =
-            increment_intermediate_hashes(txn, context.dir().etl().path(), &account_changes, &storage_changes);
+            increment_intermediate_hashes(txn, context.dir().temp().path(), &account_changes, &storage_changes);
         REQUIRE(computed_root == expected_root);
 
         node_map = read_all_nodes(account_trie);
@@ -584,7 +597,7 @@ TEST_CASE("Account and storage trie") {
 }
 
 TEST_CASE("Account trie around extension node") {
-    const Account account_one_ether{0, 1 * kEther};
+    const AccountEncodable account_one_ether{0, 1 * kEther};
 
     const std::vector<evmc::bytes32> keys{
         0x30af561000000000000000000000000000000000000000000000000000000000_bytes32,
@@ -595,22 +608,22 @@ TEST_CASE("Account trie around extension node") {
         0x3100000000000000000000000000000000000000000000000000000000000000_bytes32,
     };
 
-    test::Context context;
+    test_util::TempChainData context;
     auto& txn{context.rw_txn()};
 
-    auto hashed_accounts{db::open_cursor(txn, db::table::kHashedAccounts)};
+    auto hashed_accounts{open_cursor(txn, table::kHashedAccounts)};
     HashBuilder hb;
 
     for (const auto& key : keys) {
-        hashed_accounts.upsert(db::to_slice(key), db::to_slice(account_one_ether.encode_for_storage()));
-        hb.add_leaf(unpack_nibbles(key), account_one_ether.rlp(/*storage_root=*/kEmptyRoot));
+        hashed_accounts.upsert(to_slice(key), to_slice(account_one_ether.encode_for_storage()));
+        hb.add_leaf(unpack_nibbles(key.bytes), account_one_ether.rlp(/*storage_root=*/kEmptyRoot));
     }
 
     const evmc::bytes32 expected_root{hb.root_hash()};
-    const evmc::bytes32 computed_root{regenerate_intermediate_hashes(txn, context.dir().etl().path())};
+    const evmc::bytes32 computed_root{regenerate_intermediate_hashes(txn, context.dir().temp().path())};
     REQUIRE(to_hex(computed_root.bytes, true) == to_hex(expected_root.bytes, true));
 
-    db::PooledCursor account_trie(txn, db::table::kTrieOfAccounts);
+    PooledCursor account_trie(txn, table::kTrieOfAccounts);
     std::map<Bytes, Node> node_map{read_all_nodes(account_trie)};
     CHECK(node_map.size() == 2);
 
@@ -636,7 +649,7 @@ TEST_CASE("Account trie around extension node") {
 static evmc::address int_to_address(uint64_t i) {
     uint8_t be[8];
     endian::store_big_u64(be, i);
-    return to_evmc_address(be);
+    return bytes_to_address(be);
 }
 
 static evmc::bytes32 int_to_bytes32(uint64_t i) {
@@ -646,38 +659,38 @@ static evmc::bytes32 int_to_bytes32(uint64_t i) {
 }
 
 TEST_CASE("Trie Accounts : incremental vs regeneration") {
-    test::Context context;
+    test_util::TempChainData context;
     auto& txn{context.rw_txn()};
 
     PrefixSet account_changes;
     PrefixSet storage_changes;
 
-    static constexpr size_t n{10'000};
+    const size_t n{10'000};
 
-    db::PooledCursor hashed_accounts{txn, db::table::kHashedAccounts};
-    db::PooledCursor account_trie{txn, db::table::kTrieOfAccounts};
+    PooledCursor hashed_accounts{txn, table::kHashedAccounts};
+    PooledCursor account_trie{txn, table::kTrieOfAccounts};
 
     // ------------------------------------------------------------------------------
     // Take A: create some accounts at genesis and then apply some changes
     // ------------------------------------------------------------------------------
 
     // Start with 3n accounts at genesis, each holding 1 ETH
-    static constexpr Account one_eth{0, 1 * kEther};
+    const AccountEncodable one_eth{0, 1 * kEther};
     for (size_t i{0}, e{3 * n}; i < e; ++i) {
         const evmc::address address{int_to_address(i)};
         const auto hash{keccak256(address)};
-        hashed_accounts.upsert(db::to_slice(hash.bytes), db::to_slice(one_eth.encode_for_storage()));
+        hashed_accounts.upsert(to_slice(hash.bytes), to_slice(one_eth.encode_for_storage()));
     }
 
     // This populates TrieAccounts for the first pass
-    (void)regenerate_intermediate_hashes(txn, context.dir().etl().path());
+    (void)regenerate_intermediate_hashes(txn, context.dir().temp().path());
 
     // Double the balance of the first third of the accounts
-    static constexpr Account two_eth{0, 2 * kEther};
+    const AccountEncodable two_eth{0, 2 * kEther};
     for (size_t i{0}; i < n; ++i) {
         const evmc::address address{int_to_address(i)};
         const auto hash{keccak256(address)};
-        hashed_accounts.upsert(db::to_slice(hash.bytes), db::to_slice(two_eth.encode_for_storage()));
+        hashed_accounts.upsert(to_slice(hash.bytes), to_slice(two_eth.encode_for_storage()));
         account_changes.insert(unpack_nibbles(Bytes(&hash.bytes[0], kHashLength)));
     }
 
@@ -685,7 +698,7 @@ TEST_CASE("Trie Accounts : incremental vs regeneration") {
     for (size_t i{n}, e{2 * n}; i < e; ++i) {
         const evmc::address address{int_to_address(i)};
         const auto hash{keccak256(address)};
-        hashed_accounts.erase(db::to_slice(hash.bytes));
+        hashed_accounts.erase(to_slice(hash.bytes));
         account_changes.insert(unpack_nibbles(Bytes(&hash.bytes[0], kHashLength)));
     }
 
@@ -695,12 +708,12 @@ TEST_CASE("Trie Accounts : incremental vs regeneration") {
     for (size_t i{3 * n}, e{4 * n}; i < e; ++i) {
         const evmc::address address{int_to_address(i)};
         const auto hash{keccak256(address)};
-        hashed_accounts.upsert(db::to_slice(hash.bytes), db::to_slice(one_eth.encode_for_storage()));
+        hashed_accounts.upsert(to_slice(hash.bytes), to_slice(one_eth.encode_for_storage()));
         account_changes.insert(unpack_nibbles(Bytes(&hash.bytes[0], kHashLength)), /* mark as created */ true);
     }
 
     const auto incremental_root{
-        increment_intermediate_hashes(txn, context.dir().etl().path(), &account_changes, &storage_changes)};
+        increment_intermediate_hashes(txn, context.dir().temp().path(), &account_changes, &storage_changes)};
 
     const std::map<Bytes, Node> incremental_nodes{read_all_nodes(account_trie)};
 
@@ -708,13 +721,13 @@ TEST_CASE("Trie Accounts : incremental vs regeneration") {
     // Take B: generate intermediate hashes for the accounts as of Block 1 in one go,
     // without increment_intermediate_hashes
     // ------------------------------------------------------------------------------
-    txn->clear_map(db::open_map(txn, db::table::kHashedAccounts));
+    txn->clear_map(open_map(txn, table::kHashedAccounts));
 
     // Accounts [0,n) now hold 2 ETH
     for (size_t i{0}; i < n; ++i) {
         const evmc::address address{int_to_address(i)};
         const auto hash{keccak256(address)};
-        hashed_accounts.upsert(db::to_slice(hash.bytes), db::to_slice(two_eth.encode_for_storage()));
+        hashed_accounts.upsert(to_slice(hash.bytes), to_slice(two_eth.encode_for_storage()));
     }
 
     // Accounts [n,2n) are deleted
@@ -723,12 +736,12 @@ TEST_CASE("Trie Accounts : incremental vs regeneration") {
     for (size_t i{2 * n}, e{4 * n}; i < e; ++i) {
         const evmc::address address{int_to_address(i)};
         const auto hash{keccak256(address)};
-        hashed_accounts.upsert(db::to_slice(hash.bytes), db::to_slice(one_eth.encode_for_storage()));
+        hashed_accounts.upsert(to_slice(hash.bytes), to_slice(one_eth.encode_for_storage()));
     }
 
-    txn->clear_map(db::open_map(txn, db::table::kTrieOfAccounts));
-    txn->clear_map(db::open_map(txn, db::table::kTrieOfStorage));
-    const auto fused_root{regenerate_intermediate_hashes(txn, context.dir().etl().path())};
+    txn->clear_map(open_map(txn, table::kTrieOfAccounts));
+    txn->clear_map(open_map(txn, table::kTrieOfStorage));
+    const auto fused_root{regenerate_intermediate_hashes(txn, context.dir().temp().path())};
 
     const std::map<Bytes, Node> fused_nodes{read_all_nodes(account_trie)};
 
@@ -740,60 +753,60 @@ TEST_CASE("Trie Accounts : incremental vs regeneration") {
 }
 
 TEST_CASE("Trie Storage : incremental vs regeneration") {
-    test::Context context;
+    test_util::TempChainData context;
     auto& txn{context.rw_txn()};
 
     PrefixSet account_changes;
     PrefixSet storage_changes;
 
-    static constexpr size_t n{2'000};
+    const size_t n{2'000};
 
-    db::PooledCursor hashed_accounts{txn, db::table::kHashedAccounts};
-    db::PooledCursor hashed_storage{txn, db::table::kHashedStorage};
-    db::PooledCursor storage_trie{txn, db::table::kTrieOfStorage};
+    PooledCursor hashed_accounts{txn, table::kHashedAccounts};
+    PooledCursor hashed_storage{txn, table::kHashedStorage};
+    PooledCursor storage_trie{txn, table::kTrieOfStorage};
 
-    static constexpr uint64_t incarnation1{3};
-    static constexpr uint64_t incarnation2{1};
+    const uint64_t incarnation1{3};
+    const uint64_t incarnation2{1};
 
-    static constexpr Account account1{
+    const AccountEncodable account1{
         5,                                                                           // nonce
         7 * kEther,                                                                  // balance
         0x5e3c5ae99a1c6785210d0d233641562557ad763e18907cca3a8d42bd0a0b4ecb_bytes32,  // code_hash
         incarnation1,                                                                // incarnation
     };
 
-    static constexpr Account account2{
+    const AccountEncodable account2{
         1,                                                                           // nonce
         13 * kEther,                                                                 // balance
         0x3a9c1d84e48734ae951e023197bda6d03933a4ca44124a2a544e227aa93efe75_bytes32,  // code_hash
         incarnation2,                                                                // incarnation
     };
 
-    static constexpr auto address1{0x1000000000000000000000000000000000000000_address};
-    static constexpr auto address2{0x2000000000000000000000000000000000000000_address};
+    const evmc::address address1{0x1000000000000000000000000000000000000000_address};
+    const evmc::address address2{0x2000000000000000000000000000000000000000_address};
 
-    static const auto hashed_address1{keccak256(address1)};
-    static const auto hashed_address2{keccak256(address2)};
+    const auto hashed_address1{keccak256(address1)};
+    const auto hashed_address2{keccak256(address2)};
 
-    hashed_accounts.upsert(db::to_slice(hashed_address1.bytes), db::to_slice(account1.encode_for_storage()));
-    hashed_accounts.upsert(db::to_slice(hashed_address2.bytes), db::to_slice(account2.encode_for_storage()));
+    hashed_accounts.upsert(to_slice(hashed_address1.bytes), to_slice(account1.encode_for_storage()));
+    hashed_accounts.upsert(to_slice(hashed_address2.bytes), to_slice(account2.encode_for_storage()));
 
-    static const Bytes storage_prefix1{db::storage_prefix(hashed_address1.bytes, incarnation1)};
-    static const Bytes storage_prefix2{db::storage_prefix(hashed_address2.bytes, incarnation2)};
+    const Bytes storage_prefix1{storage_prefix(hashed_address1.bytes, incarnation1)};
+    const Bytes storage_prefix2{storage_prefix(hashed_address2.bytes, incarnation2)};
 
     const auto upsert_storage_for_two_test_accounts = [&](size_t i, ByteView value, bool register_change,
                                                           bool new_records = false) {
         const evmc::bytes32 plain_loc1{int_to_bytes32(2 * i)};
         const evmc::bytes32 plain_loc2{int_to_bytes32(2 * i + 1)};
 
-        const auto hashed_loc1{keccak256(plain_loc1)};
-        const auto hashed_loc2{keccak256(plain_loc2)};
+        const auto hashed_loc1{silkworm::keccak256(plain_loc1.bytes)};
+        const auto hashed_loc2{silkworm::keccak256(plain_loc2.bytes)};
 
         const auto nibbled_hashed_loc1{unpack_nibbles(hashed_loc1.bytes)};
         const auto nibbled_hashed_loc2{unpack_nibbles(hashed_loc2.bytes)};
 
-        db::upsert_storage_value(hashed_storage, storage_prefix1, hashed_loc1.bytes, value);
-        db::upsert_storage_value(hashed_storage, storage_prefix2, hashed_loc2.bytes, value);
+        upsert_storage_value(hashed_storage, storage_prefix1, hashed_loc1.bytes, value);
+        upsert_storage_value(hashed_storage, storage_prefix2, hashed_loc2.bytes, value);
         if (register_change) {
             storage_changes.insert(Bytes{storage_prefix1 + nibbled_hashed_loc1}, new_records);
             storage_changes.insert(Bytes{storage_prefix2 + nibbled_hashed_loc2}, new_records);
@@ -805,15 +818,15 @@ TEST_CASE("Trie Storage : incremental vs regeneration") {
     // ------------------------------------------------------------------------------
 
     // Start with 3n storage slots per account at genesis, each with the same value
-    static const Bytes value_x{*from_hex("42")};
+    const Bytes value_x{*from_hex("42")};
     for (size_t i{0}, e{3 * n}; i < e; ++i) {
         upsert_storage_for_two_test_accounts(i, value_x, false);
     }
 
-    (void)regenerate_intermediate_hashes(txn, context.dir().etl().path());
+    (void)regenerate_intermediate_hashes(txn, context.dir().temp().path());
 
     // Change the value of the first third of the storage
-    static const Bytes value_y{*from_hex("71f602b294119bf452f1923814f5c6de768221254d3056b1bd63e72dc3142a29")};
+    const Bytes value_y{*from_hex("71f602b294119bf452f1923814f5c6de768221254d3056b1bd63e72dc3142a29")};
     for (size_t i{0}; i < n; ++i) {
         upsert_storage_for_two_test_accounts(i, value_y, true);
     }
@@ -834,7 +847,7 @@ TEST_CASE("Trie Storage : incremental vs regeneration") {
     account_changes.insert(unpack_nibbles(hashed_address2.bytes));
 
     const auto incremental_root{
-        increment_intermediate_hashes(txn, context.dir().etl().path(), &account_changes, &storage_changes)};
+        increment_intermediate_hashes(txn, context.dir().temp().path(), &account_changes, &storage_changes)};
 
     const std::map<Bytes, Node> incremental_nodes{read_all_nodes(storage_trie)};
 
@@ -842,7 +855,7 @@ TEST_CASE("Trie Storage : incremental vs regeneration") {
     // Take B: generate intermediate hashes for the storage as of Block 1 in one go,
     // without increment_intermediate_hashes
     // ------------------------------------------------------------------------------
-    txn->clear_map(db::open_map(txn, db::table::kHashedStorage));
+    txn->clear_map(open_map(txn, table::kHashedStorage));
 
     // The first third of the storage now has value_y
     for (size_t i{0}; i < n; ++i) {
@@ -856,9 +869,9 @@ TEST_CASE("Trie Storage : incremental vs regeneration") {
         upsert_storage_for_two_test_accounts(i, value_x, false);
     }
 
-    txn->clear_map(db::open_map(txn, db::table::kTrieOfAccounts));
-    txn->clear_map(db::open_map(txn, db::table::kTrieOfStorage));
-    const auto fused_root{regenerate_intermediate_hashes(txn, context.dir().etl().path())};
+    txn->clear_map(open_map(txn, table::kTrieOfAccounts));
+    txn->clear_map(open_map(txn, table::kTrieOfStorage));
+    const auto fused_root{regenerate_intermediate_hashes(txn, context.dir().temp().path())};
 
     const std::map<Bytes, Node> fused_nodes{read_all_nodes(storage_trie)};
 
