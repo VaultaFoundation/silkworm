@@ -27,7 +27,7 @@ class DecodingException : public std::runtime_error {
   public:
     explicit DecodingException(DecodingError err, const std::string& message = "");
 
-    [[nodiscard]] DecodingError err() const noexcept { return err_; }
+    DecodingError err() const noexcept { return err_; }
 
   private:
     DecodingError err_;
@@ -38,6 +38,12 @@ inline void success_or_throw(const tl::expected<T, DecodingError>& res, const st
     if (!res) {
         throw DecodingException(res.error(), error_message);
     }
+}
+
+template <class T>
+inline T unwrap_or_throw(tl::expected<T, DecodingError> res, const std::string& error_message = "") {
+    success_or_throw(res, error_message);
+    return std::move(*res);
 }
 
 }  // namespace silkworm

@@ -16,15 +16,26 @@
 
 #pragma once
 
-#include <silkworm/node/db/bitmap.hpp>
-#include <silkworm/node/stagedsync/stages/stage.hpp>
+#include <silkworm/db/datastore/etl/collector_settings.hpp>
+#include <silkworm/db/datastore/kvdb/bitmap.hpp>
+#include <silkworm/db/prune_mode.hpp>
+#include <silkworm/db/stage.hpp>
 
 namespace silkworm::stagedsync {
 
 class HistoryIndex : public Stage {
   public:
-    explicit HistoryIndex(NodeSettings* node_settings, SyncContext* sync_context)
-        : Stage(sync_context, db::stages::kHistoryIndexKey, node_settings){};
+    HistoryIndex(
+        SyncContext* sync_context,
+        size_t batch_size,
+        datastore::etl::CollectorSettings etl_settings,
+        db::BlockAmount prune_mode_history)
+        : Stage(sync_context, db::stages::kHistoryIndexKey),
+          batch_size_(batch_size),
+          etl_settings_(std::move(etl_settings)),
+          prune_mode_history_(prune_mode_history) {}
+    HistoryIndex(const HistoryIndex&) = delete;  // not copyable
+    HistoryIndex(HistoryIndex&&) = delete;       // nor movable
     ~HistoryIndex() override = default;
 
     Stage::Result forward(db::RWTxn& txn) final;
@@ -33,8 +44,12 @@ class HistoryIndex : public Stage {
     std::vector<std::string> get_log_progress() final;
 
   private:
-    std::unique_ptr<etl::Collector> collector_{nullptr};
-    std::unique_ptr<db::bitmap::IndexLoader> index_loader_{nullptr};
+    size_t batch_size_;
+    datastore::etl::CollectorSettings etl_settings_;
+    db::BlockAmount prune_mode_history_;
+
+    std::unique_ptr<datastore::kvdb::Collector> collector_;
+    std::unique_ptr<datastore::kvdb::bitmap::IndexLoader> index_loader_;
 
     std::atomic_bool loading_{false};  // Whether we're in ETL loading phase
     std::string current_source_;       // Current source of data

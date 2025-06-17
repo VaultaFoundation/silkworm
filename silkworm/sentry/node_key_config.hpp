@@ -21,23 +21,24 @@
 #include <variant>
 
 #include <silkworm/core/common/base.hpp>
+#include <silkworm/core/common/bytes.hpp>
 #include <silkworm/infra/common/directories.hpp>
 #include <silkworm/sentry/common/ecc_key_pair.hpp>
 
 namespace silkworm::sentry {
 
-using NodeKey = common::EccKeyPair;
+using NodeKey = EccKeyPair;
 
 class NodeKeyConfig {
   public:
     explicit NodeKeyConfig(std::filesystem::path path);
     explicit NodeKeyConfig(const DataDirectory& data_dir);
 
-    [[nodiscard]] NodeKey load() const;
+    NodeKey load() const;
 
     void save(const NodeKey& key) const;
 
-    [[nodiscard]] bool exists() const;
+    bool exists() const;
 
   private:
     std::filesystem::path path_;

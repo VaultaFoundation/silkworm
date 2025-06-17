@@ -27,14 +27,14 @@ class InboundBlockHeaders : public InboundMessage {
   public:
     InboundBlockHeaders(ByteView data, PeerId peer_id);
 
-    [[nodiscard]] std::string name() const override { return "InboundBlockHeaders"; }
-    [[nodiscard]] std::string content() const override;
-    [[nodiscard]] uint64_t reqId() const override;
+    std::string name() const override { return "InboundBlockHeaders"; }
+    std::string content() const override;
+    uint64_t req_id() const override;
 
-    void execute(db::ROAccess, HeaderChain&, BodySequence&, SentryClient&) override;
+    void execute(db::DataStoreRef, HeaderChain&, BodySequence&, SentryClient&) override;
 
   private:
-    PeerId peerId_;
+    PeerId peer_id_;
     BlockHeadersPacket66 packet_;
 };
 

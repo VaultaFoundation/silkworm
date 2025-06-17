@@ -18,7 +18,7 @@
 
 #include <silkworm/infra/concurrency/task.hpp>
 
-#include <boost/asio/io_context.hpp>
+#include <boost/asio/any_io_executor.hpp>
 
 #include <silkworm/infra/concurrency/channel.hpp>
 #include <silkworm/sentry/common/atomic_value.hpp>
@@ -29,13 +29,13 @@ namespace silkworm::sentry {
 
 class StatusManager {
   public:
-    StatusManager(boost::asio::io_context& io_context)
-        : status_channel_(io_context),
+    explicit StatusManager(const boost::asio::any_io_executor& executor)
+        : status_channel_(executor),
           status_(eth::StatusData{}) {}
 
     Task<void> wait_for_status();
 
-    Task<void> start();
+    Task<void> run();
 
     concurrency::Channel<eth::StatusData>& status_channel() {
         return status_channel_;
@@ -47,7 +47,7 @@ class StatusManager {
 
   private:
     concurrency::Channel<eth::StatusData> status_channel_;
-    common::AtomicValue<eth::StatusData> status_;
+    AtomicValue<eth::StatusData> status_;
 };
 
 }  // namespace silkworm::sentry

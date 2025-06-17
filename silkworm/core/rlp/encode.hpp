@@ -22,6 +22,7 @@
 #include <intx/intx.hpp>
 
 #include <silkworm/core/common/base.hpp>
+#include <silkworm/core/common/bytes.hpp>
 #include <silkworm/core/common/endian.hpp>
 
 namespace silkworm::rlp {
@@ -38,7 +39,7 @@ void encode_header(Bytes& to, Header header);
 
 void encode(Bytes& to, ByteView str);
 
-template <typename T, std::enable_if_t<UnsignedIntegral<T>, int> = 1>
+template <UnsignedIntegral T>
 void encode(Bytes& to, const T& n) {
     if (n == 0) {
         to.push_back(kEmptyStringCode);
@@ -57,14 +58,13 @@ size_t length_of_length(uint64_t payload_length) noexcept;
 
 size_t length(ByteView) noexcept;
 
-template <typename T, std::enable_if_t<UnsignedIntegral<T>, int> = 1>
+template <UnsignedIntegral T>
 size_t length(const T& n) noexcept {
     if (n < kEmptyStringCode) {
         return 1;
-    } else {
-        const size_t n_bytes{intx::count_significant_bytes(n)};
-        return n_bytes + length_of_length(n_bytes);
     }
+    const size_t n_bytes{intx::count_significant_bytes(n)};
+    return n_bytes + length_of_length(n_bytes);
 }
 
 inline size_t length(bool) noexcept {

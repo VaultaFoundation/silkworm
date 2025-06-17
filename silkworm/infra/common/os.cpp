@@ -32,7 +32,7 @@
 namespace silkworm::os {
 
 uint64_t max_file_descriptors() {
-    uint64_t max_descriptors;
+    uint64_t max_descriptors{0};
 #if defined(__linux__) || defined(__APPLE__)
     // Get the current limit
     rlimit limit{};
@@ -42,8 +42,6 @@ uint64_t max_file_descriptors() {
     max_descriptors = limit.rlim_cur;
 #elif defined(_WIN32)
     max_descriptors = _getmaxstdio();
-#else
-    max_descriptors = 0;
 #endif
     return max_descriptors;
 }
@@ -60,10 +58,10 @@ bool set_max_file_descriptors(uint64_t max_descriptors) {
     return set_result == 0;
 #elif defined(_WIN32)
     // Hard limit is hard-coded on Windows
-    constexpr auto kMaxNumFiles = 8'192;
+    static constexpr int kMaxNumFiles = 8'192;
     // Try to update the *soft* limit (not over the hard limit i.e. max allowance)
     const int num_max_descriptors = max_descriptors < kMaxNumFiles ? static_cast<int>(max_descriptors) : kMaxNumFiles;
-    const auto result = _setmaxstdio(num_max_descriptors);
+    const int result = _setmaxstdio(num_max_descriptors);
     return result == num_max_descriptors;
 #else
     (void)max_descriptors;
@@ -71,14 +69,17 @@ bool set_max_file_descriptors(uint64_t max_descriptors) {
 #endif
 }
 
-std::size_t page_size() noexcept {
+size_t page_size() noexcept {
+    static auto system_page_size = []() -> size_t {
 #ifdef _WIN32
-    SYSTEM_INFO system_info;
-    ::GetSystemInfo(&system_info);
-    return static_cast<std::size_t>(system_info.dwPageSize);
+        SYSTEM_INFO system_info;
+        ::GetSystemInfo(&system_info);
+        return static_cast<size_t>(system_info.dwPageSize);
 #else
-    return static_cast<std::size_t>(::getpagesize());
+        return static_cast<size_t>(::getpagesize());
 #endif  // _WIN32
+    }();
+    return system_page_size;
 }
 
 }  // namespace silkworm::os

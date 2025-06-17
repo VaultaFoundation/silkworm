@@ -18,7 +18,7 @@
 
 #include <list>
 
-#include <silkworm/node/db/access_layer.hpp>
+#include <silkworm/db/access_layer.hpp>
 #include <silkworm/sync/messages/outbound_get_block_bodies.hpp>
 #include <silkworm/sync/packets/block_bodies_packet.hpp>
 #include <silkworm/sync/packets/new_block_packet.hpp>
@@ -53,17 +53,17 @@ inline std::vector<std::shared_ptr<Block>> to_plain_blocks(const Blocks& blocks)
  */
 class BodySequence {
   public:
-    explicit BodySequence();
+    explicit BodySequence() = default;
     ~BodySequence() = default;
 
     // sync current state - this must be done at header forward
-    void current_state(BlockNum highest_in_db);
+    void current_state(BlockNum max_in_db);
 
     // set a downloading target - this must be done at body forward
     void download_bodies(const Headers& headers);
 
     //! core functionalities: trigger the internal algorithms to decide what bodies we miss
-    auto request_bodies(time_point_t tp) -> std::shared_ptr<OutboundMessage>;
+    std::shared_ptr<OutboundMessage> request_bodies(time_point_t tp);
 
     //! it needs to know if the request issued was not delivered
     void request_nack(const GetBlockBodiesPacket66&);
@@ -78,16 +78,16 @@ class BodySequence {
     Blocks withdraw_ready_bodies();
 
     //! minor functionalities
-    [[nodiscard]] bool has_completed() const;
-    [[nodiscard]] BlockNum highest_block_in_output() const;
-    [[nodiscard]] BlockNum highest_block_in_memory() const;
-    [[nodiscard]] BlockNum lowest_block_in_memory() const;
-    [[nodiscard]] BlockNum target_height() const;
-    [[nodiscard]] size_t outstanding_requests(time_point_t tp) const;
-    [[nodiscard]] size_t ready_bodies() const;
-    [[nodiscard]] size_t requests() const;
+    bool has_completed() const;
+    BlockNum max_block_in_output() const;
+    BlockNum max_block_in_memory() const;
+    BlockNum lowest_block_in_memory() const;
+    BlockNum target_block_num() const;
+    size_t outstanding_requests(time_point_t tp) const;
+    size_t ready_bodies() const;
+    size_t requests() const;
 
-    [[nodiscard]] const Download_Statistics& statistics() const;
+    const DownloadStatistics& statistics() const;
 
     // downloading process tuning parameters
     static constexpr size_t kMaxInMemoryRequests = 400000;
@@ -96,8 +96,7 @@ class BodySequence {
 
   protected:
     using MinBlock = BlockNum;
-    auto renew_stale_requests(GetBlockBodiesPacket66&, MinBlock&, time_point_t, seconds_t timeout)
-        -> std::vector<PeerPenalization>;
+    std::vector<PeerPenalization> renew_stale_requests(GetBlockBodiesPacket66&, MinBlock&, time_point_t, seconds_t timeout);
     void make_new_requests(GetBlockBodiesPacket66&, MinBlock&, time_point_t, seconds_t timeout);
 
     static bool is_valid_body(const BlockHeader&, const BlockBody&);
@@ -105,7 +104,7 @@ class BodySequence {
     struct BodyRequest {
         uint64_t request_id{0};
         Hash block_hash;
-        BlockNum block_height{0};
+        BlockNum block_num{0};
         BlockHeader header;
         BlockBody body;
         time_point_t request_time;
@@ -117,7 +116,7 @@ class BodySequence {
 
     struct AnnouncedBlocks {
         void add(Block block);
-        std::optional<BlockBody> remove(BlockNum bn);
+        std::optional<BlockBody> remove(BlockNum block_num);
         size_t size();
 
       private:
@@ -132,18 +131,18 @@ class BodySequence {
         std::list<Iter> find_by_request_id(uint64_t request_id);
         Iter find_by_hash(Hash oh, Hash tr);
 
-        [[nodiscard]] BlockNum lowest_block() const;
-        [[nodiscard]] BlockNum highest_block() const;
+        BlockNum lowest_block() const;
+        BlockNum max_block() const;
     };
 
     IncreasingHeightOrderedRequestContainer body_requests_;
     AnnouncedBlocks announced_blocks_;
 
-    BlockNum highest_body_in_output_{0};
-    BlockNum target_height_{0};
+    BlockNum max_body_in_output_{0};
+    BlockNum target_block_num_{0};
     time_point_t last_nack_;
     size_t ready_bodies_{0};
-    Download_Statistics statistics_;
+    DownloadStatistics statistics_;
     std::string retrieval_condition_;
 };
 

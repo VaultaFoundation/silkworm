@@ -17,13 +17,14 @@
 #pragma once
 
 #include <silkworm/core/common/base.hpp>
+#include <silkworm/core/common/bytes.hpp>
 #include <silkworm/sentry/common/ecc_public_key.hpp>
 
 namespace silkworm::sentry::rlpx::auth {
 
 class EciesCipher {
   public:
-    using PublicKey = common::EccPublicKey;
+    using PublicKey = EccPublicKey;
     using PublicKeyView = const PublicKey&;
     using PrivateKeyView = ByteView;
 

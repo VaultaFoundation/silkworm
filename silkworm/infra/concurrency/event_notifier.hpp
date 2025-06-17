@@ -18,11 +18,9 @@
 
 #include <variant>
 
-#include <silkworm/infra/concurrency/coroutine.hpp>
+#include "task.hpp"
 
 #include <boost/asio/any_io_executor.hpp>
-#include <boost/asio/awaitable.hpp>
-#include <boost/asio/io_context.hpp>
 
 #include "channel.hpp"
 
@@ -33,11 +31,9 @@ namespace silkworm::concurrency {
 // Only one waiter is supported.
 class EventNotifier {
   public:
-    explicit EventNotifier(boost::asio::any_io_executor&& executor) : channel_(executor, 1) {}
-    explicit EventNotifier(boost::asio::any_io_executor& executor) : channel_(executor, 1) {}
-    explicit EventNotifier(boost::asio::io_context& io_context) : channel_(io_context, 1) {}
+    explicit EventNotifier(const boost::asio::any_io_executor& executor) : channel_(executor, 1) {}
 
-    boost::asio::awaitable<void> wait() {
+    Task<void> wait() {
         co_await channel_.receive();
     }
 

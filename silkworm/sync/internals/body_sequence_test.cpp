@@ -18,19 +18,20 @@
 
 #include <algorithm>
 
-#include <catch2/catch.hpp>
+#include <catch2/catch_test_macros.hpp>
 
 #include <silkworm/core/chain/genesis.hpp>
-#include <silkworm/core/common/cast.hpp>
-#include <silkworm/node/db/genesis.hpp>
-#include <silkworm/node/test/context.hpp>
+#include <silkworm/core/common/bytes_to_string.hpp>
+#include <silkworm/db/genesis.hpp>
+#include <silkworm/db/test_util/temp_chain_data.hpp>
+#include <silkworm/infra/test_util/log.hpp>
 #include <silkworm/sync/sentry_client.hpp>
 
 namespace silkworm {
 // Useful definitions
 // ----------------------------------------------------------------------------
 
-class BodySequence_ForTest : public BodySequence {
+class BodySequenceForTest : public BodySequence {
   public:
     // inheriting constructor
     using BodySequence::BodySequence;
@@ -45,7 +46,7 @@ TEST_CASE("body downloading", "[silkworm][sync][BodySequence]") {
     using namespace std::chrono_literals;
     using intx::operator""_u256;
 
-    test::Context context;
+    db::test_util::TempChainData context;
     context.add_genesis_data();
 
     auto& txn{context.rw_txn()};
@@ -81,9 +82,9 @@ TEST_CASE("body downloading", "[silkworm][sync][BodySequence]") {
     block1.header = header1;
     // Note: block1 has zero transactions and zero ommers on mainnet
 
-    BlockNum highest_header = 1;
+    BlockNum max_header = 1;
 
-    BodySequence_ForTest bs;
+    BodySequenceForTest bs;
 
     bs.current_state(0);
     bs.download_bodies({make_shared<BlockHeader>(header1)});
@@ -93,10 +94,10 @@ TEST_CASE("body downloading", "[silkworm][sync][BodySequence]") {
 
     SECTION("should request block 1 & should accept it") {
         // check status
-        REQUIRE(bs.highest_block_in_output() == 0);
-        REQUIRE(bs.target_height() == highest_header);
-        REQUIRE(bs.highest_block_in_memory() == highest_header);
-        REQUIRE(bs.lowest_block_in_memory() == highest_header);
+        REQUIRE(bs.max_block_in_output() == 0);
+        REQUIRE(bs.target_block_num() == max_header);
+        REQUIRE(bs.max_block_in_memory() == max_header);
+        REQUIRE(bs.lowest_block_in_memory() == max_header);
 
         // requesting
         std::shared_ptr<OutboundMessage> message = bs.request_bodies(tp);
@@ -123,38 +124,38 @@ TEST_CASE("body downloading", "[silkworm][sync][BodySequence]") {
 
         REQUIRE(!bs.body_requests_.empty());
         REQUIRE(bs.body_requests_.lowest_block() == 1);
-        REQUIRE(bs.body_requests_.highest_block() == 1);
+        REQUIRE(bs.body_requests_.max_block() == 1);
 
         auto rs = bs.body_requests_.find(header1.number);
         REQUIRE(rs != bs.body_requests_.end());
-        BodySequence_ForTest::BodyRequest& request_status = rs->second;
+        BodySequenceForTest::BodyRequest& request_status = rs->second;
 
-        REQUIRE(request_status.block_height == 1);
+        REQUIRE(request_status.block_num == 1);
         REQUIRE(request_status.block_hash == header1_hash);
         REQUIRE(request_status.header == header1);
         REQUIRE(request_status.request_time == tp);
         REQUIRE(request_status.ready == false);
 
-        REQUIRE(bs.highest_block_in_memory() == 1);
+        REQUIRE(bs.max_block_in_memory() == 1);
         REQUIRE(bs.lowest_block_in_memory() == 1);
 
         // accepting
         PeerId peer_id{byte_ptr_cast("1")};
         BlockBodiesPacket66 response_packet;
-        response_packet.requestId = packet.requestId;
+        response_packet.request_id = packet.request_id;
         response_packet.request.push_back(block1);
 
         auto penalty = bs.accept_requested_bodies(response_packet, peer_id);
 
-        REQUIRE(penalty == NoPenalty);
+        REQUIRE(penalty == kNoPenalty);
         REQUIRE(request_status.ready);
         REQUIRE(request_status.body == block1);
-        REQUIRE(request_status.block_height == 1);           // same as before
+        REQUIRE(request_status.block_num == 1);              // same as before
         REQUIRE(request_status.block_hash == header1_hash);  // same as before
         REQUIRE(request_status.header == header1);           // same as before
 
-        REQUIRE(bs.highest_block_in_memory() == 1);  // same as before
-        REQUIRE(bs.lowest_block_in_memory() == 1);   // same as before
+        REQUIRE(bs.max_block_in_memory() == 1);     // same as before
+        REQUIRE(bs.lowest_block_in_memory() == 1);  // same as before
 
         // check statistics
         auto& statistic = bs.statistics();
@@ -170,9 +171,9 @@ TEST_CASE("body downloading", "[silkworm][sync][BodySequence]") {
 
         auto rs = bs.body_requests_.find(header1.number);
         REQUIRE(rs != bs.body_requests_.end());
-        BodySequence_ForTest::BodyRequest& request_status1 = rs->second;
+        BodySequenceForTest::BodyRequest& request_status1 = rs->second;
 
-        REQUIRE(request_status1.block_height == 1);
+        REQUIRE(request_status1.block_num == 1);
         REQUIRE(request_status1.request_time == tp);
         REQUIRE(request_status1.ready == false);
 
@@ -183,14 +184,14 @@ TEST_CASE("body downloading", "[silkworm][sync][BodySequence]") {
 
         rs = bs.body_requests_.find(1);
         REQUIRE(rs != bs.body_requests_.end());
-        BodySequence_ForTest::BodyRequest& request_status2 = rs->second;
+        BodySequenceForTest::BodyRequest& request_status2 = rs->second;
 
         // should renew the previous request
-        REQUIRE(request_status2.block_height == 1);
+        REQUIRE(request_status2.block_num == 1);
         REQUIRE(request_status2.request_time == tp);
         REQUIRE(request_status2.ready == false);
 
-        REQUIRE(bs.highest_block_in_memory() == 1);
+        REQUIRE(bs.max_block_in_memory() == 1);
         REQUIRE(bs.lowest_block_in_memory() == 1);
 
         // check statistics
@@ -213,7 +214,7 @@ TEST_CASE("body downloading", "[silkworm][sync][BodySequence]") {
 
         auto rs = bs.body_requests_.find(header1.number);
         REQUIRE(rs != bs.body_requests_.end());
-        BodySequence_ForTest::BodyRequest& request_status = rs->second;
+        BodySequenceForTest::BodyRequest& request_status = rs->second;
 
         // accepting
         Block block1tampered = block1;
@@ -224,19 +225,19 @@ TEST_CASE("body downloading", "[silkworm][sync][BodySequence]") {
 
         PeerId peer_id{byte_ptr_cast("1")};
         BlockBodiesPacket66 response_packet;
-        response_packet.requestId = packet.requestId;       // correct request-id
+        response_packet.request_id = packet.request_id;     // correct request-id
         response_packet.request.push_back(block1tampered);  // wrong body
 
         [[maybe_unused]] auto penalty = bs.accept_requested_bodies(response_packet, peer_id);
 
-        // REQUIRE(penalty == BadBlockPenalty); // for now we choose to not penalize the peer
+        // REQUIRE(penalty == kBadBlockPenalty); // for now we choose to not penalize the peer
         REQUIRE(!request_status.ready);
-        REQUIRE(request_status.block_height == 1);           // same as before
+        REQUIRE(request_status.block_num == 1);              // same as before
         REQUIRE(request_status.block_hash == header1_hash);  // same as before
         REQUIRE(request_status.header == header1);           // same as before
 
-        REQUIRE(bs.highest_block_in_memory() == 1);  // same as before
-        REQUIRE(bs.lowest_block_in_memory() == 1);   // same as before
+        REQUIRE(bs.max_block_in_memory() == 1);     // same as before
+        REQUIRE(bs.lowest_block_in_memory() == 1);  // same as before
 
         auto& statistic = bs.statistics();
         REQUIRE(statistic.requested_items == 1);
@@ -258,12 +259,12 @@ TEST_CASE("body downloading", "[silkworm][sync][BodySequence]") {
 
         auto rs = bs.body_requests_.find(header1.number);
         REQUIRE(rs != bs.body_requests_.end());
-        BodySequence_ForTest::BodyRequest& request_status = rs->second;
+        BodySequenceForTest::BodyRequest& request_status = rs->second;
 
         // accepting
         PeerId peer_id{byte_ptr_cast("1")};
         BlockBodiesPacket66 response_packet;
-        response_packet.requestId = packet.requestId;
+        response_packet.request_id = packet.request_id;
         response_packet.request.push_back(block1);
 
         bs.accept_requested_bodies(response_packet, peer_id);
@@ -271,14 +272,14 @@ TEST_CASE("body downloading", "[silkworm][sync][BodySequence]") {
         // another one
         auto penalty = bs.accept_requested_bodies(response_packet, peer_id);
 
-        REQUIRE(penalty == NoPenalty);                       // correct?
+        REQUIRE(penalty == kNoPenalty);                      // correct?
         REQUIRE(request_status.ready);                       // same as before
-        REQUIRE(request_status.block_height == 1);           // same as before
+        REQUIRE(request_status.block_num == 1);              // same as before
         REQUIRE(request_status.block_hash == header1_hash);  // same as before
         REQUIRE(request_status.header == header1);           // same as before
 
-        REQUIRE(bs.highest_block_in_memory() == 1);  // same as before
-        REQUIRE(bs.lowest_block_in_memory() == 1);   // same as before
+        REQUIRE(bs.max_block_in_memory() == 1);     // same as before
+        REQUIRE(bs.lowest_block_in_memory() == 1);  // same as before
 
         auto& statistic = bs.statistics();
         REQUIRE(statistic.requested_items == 1);
@@ -300,25 +301,25 @@ TEST_CASE("body downloading", "[silkworm][sync][BodySequence]") {
 
         auto rs = bs.body_requests_.find(header1.number);
         REQUIRE(rs != bs.body_requests_.end());
-        BodySequence_ForTest::BodyRequest& request_status = rs->second;
+        BodySequenceForTest::BodyRequest& request_status = rs->second;
 
         // in real life the request can become stale and can be renewed
         // but if the peer is slow we will get a response to the old request
 
         PeerId peer_id{byte_ptr_cast("1")};
         BlockBodiesPacket66 response_packet;
-        response_packet.requestId = packet.requestId - 1;  // simulate response to prev request
+        response_packet.request_id = packet.request_id - 1;  // simulate response to prev request
         response_packet.request.push_back(block1);
 
         auto penalty = bs.accept_requested_bodies(response_packet, peer_id);
 
-        REQUIRE(penalty == NoPenalty);
+        REQUIRE(penalty == kNoPenalty);
         REQUIRE(request_status.ready);  // accepted
-        REQUIRE(request_status.block_height == 1);
+        REQUIRE(request_status.block_num == 1);
         REQUIRE(request_status.block_hash == header1_hash);
         REQUIRE(request_status.header == header1);
 
-        REQUIRE(bs.highest_block_in_memory() == 1);
+        REQUIRE(bs.max_block_in_memory() == 1);
         REQUIRE(bs.lowest_block_in_memory() == 1);
 
         auto& statistic = bs.statistics();
@@ -330,7 +331,7 @@ TEST_CASE("body downloading", "[silkworm][sync][BodySequence]") {
     }
 
     SECTION("should not renew recent requests") {
-        REQUIRE(highest_header == 1);  // test pre-requisite
+        REQUIRE(max_header == 1);  // test pre-requisite
 
         // requesting
         std::shared_ptr<OutboundMessage> message1 = bs.request_bodies(tp);
@@ -346,14 +347,14 @@ TEST_CASE("body downloading", "[silkworm][sync][BodySequence]") {
 
         auto& packet2 = get_bodies_msg2->packet();
 
-        REQUIRE(packet2.request.empty());  // no new request, highest_header == 1 and we already requested body 1
+        REQUIRE(packet2.request.empty());  // no new request, max_header == 1 and we already requested body 1
         REQUIRE(bs.body_requests_.size() == 1);
 
         auto rs = bs.body_requests_.find(header1.number);
         REQUIRE(rs != bs.body_requests_.end());
-        BodySequence_ForTest::BodyRequest& request_status = rs->second;
+        BodySequenceForTest::BodyRequest& request_status = rs->second;
 
-        REQUIRE(request_status.block_height == 1);
+        REQUIRE(request_status.block_num == 1);
         REQUIRE(request_status.request_time == tp);
         REQUIRE(request_status.ready == false);
 
@@ -366,7 +367,7 @@ TEST_CASE("body downloading", "[silkworm][sync][BodySequence]") {
     }
 
     SECTION("should not make other requests after a nack") {
-        REQUIRE(highest_header == 1);  // test pre-requisite
+        REQUIRE(max_header == 1);  // test pre-requisite
 
         // requesting
         std::shared_ptr<OutboundMessage> message1 = bs.request_bodies(tp);
@@ -380,11 +381,11 @@ TEST_CASE("body downloading", "[silkworm][sync][BodySequence]") {
         REQUIRE(bs.body_requests_.size() == 1);
         auto rs = bs.body_requests_.find(header1.number);
         REQUIRE(rs != bs.body_requests_.end());
-        BodySequence_ForTest::BodyRequest& request_status = rs->second;
+        BodySequenceForTest::BodyRequest& request_status = rs->second;
 
         auto& statistic = bs.statistics();
 
-        REQUIRE(request_status.block_height == 1);
+        REQUIRE(request_status.block_num == 1);
         REQUIRE(request_status.request_time == tp);
         REQUIRE(request_status.ready == false);
         REQUIRE(statistic.requested_items == 1);
@@ -408,7 +409,7 @@ TEST_CASE("body downloading", "[silkworm][sync][BodySequence]") {
     }
 
     SECTION("should not renew ready requests") {
-        REQUIRE(highest_header == 1);  // test pre-requisite
+        REQUIRE(max_header == 1);  // test pre-requisite
 
         // requesting
         std::shared_ptr<OutboundMessage> message1 = bs.request_bodies(tp);
@@ -416,7 +417,7 @@ TEST_CASE("body downloading", "[silkworm][sync][BodySequence]") {
         REQUIRE(bs.body_requests_.size() == 1);
         auto rs = bs.body_requests_.find(header1.number);
         REQUIRE(rs != bs.body_requests_.end());
-        BodySequence_ForTest::BodyRequest& request_status = rs->second;
+        BodySequenceForTest::BodyRequest& request_status = rs->second;
 
         request_status.ready = true;               // mark as ready
         tp += 2 * SentryClient::kRequestDeadline;  // make it stale
@@ -430,7 +431,7 @@ TEST_CASE("body downloading", "[silkworm][sync][BodySequence]") {
 
         auto& packet2 = get_bodies_msg2->packet();
 
-        REQUIRE(packet2.request.empty());  // no new request, highest_header == 1 and we already requested body 1
+        REQUIRE(packet2.request.empty());  // no new request, max_header == 1 and we already requested body 1
         REQUIRE(bs.body_requests_.size() == 1);
     }
 
@@ -441,17 +442,17 @@ TEST_CASE("body downloading", "[silkworm][sync][BodySequence]") {
         REQUIRE(bs.body_requests_.size() == 1);
         auto rs = bs.body_requests_.find(header1.number);
         REQUIRE(rs != bs.body_requests_.end());
-        BodySequence_ForTest::BodyRequest& request_status1 = rs->second;
+        BodySequenceForTest::BodyRequest& request_status1 = rs->second;
 
         // make another request in the same time
         BlockHeader header2;
         header2.number = 2;
         header2.parent_hash = header1_hash;
-        db::RWTxn txn2{context.env()};
+        datastore::kvdb::RWTxnManaged txn2 = context.chaindata_rw().start_rw_tx();
         db::write_canonical_header_hash(txn2, header2.hash().bytes, 1);
         db::write_canonical_header(txn2, header2);
         db::write_header(txn2, header2, true);
-        txn2.commit();
+        txn2.commit_and_renew();
         bs.download_bodies({make_shared<BlockHeader>(header2)});
 
         std::shared_ptr<OutboundMessage> message2 = bs.request_bodies(tp);
@@ -466,10 +467,10 @@ TEST_CASE("body downloading", "[silkworm][sync][BodySequence]") {
         REQUIRE(bs.body_requests_.size() == 2);
         rs = bs.body_requests_.find(header2.number);
         REQUIRE(rs != bs.body_requests_.end());
-        BodySequence_ForTest::BodyRequest& request_status2 = rs->second;
+        BodySequenceForTest::BodyRequest& request_status2 = rs->second;
 
         // should not renew the previous request
-        REQUIRE(request_status2.block_height != request_status1.block_height);
+        REQUIRE(request_status2.block_num != request_status1.block_num);
 
         // statistics
         auto& statistic = bs.statistics();
@@ -493,12 +494,12 @@ TEST_CASE("body downloading", "[silkworm][sync][BodySequence]") {
         REQUIRE(get_bodies_msg != nullptr);
 
         REQUIRE(get_bodies_msg->penalties().empty());
-        REQUIRE(!get_bodies_msg->packet_present());  // no new request, we reached highest_header (=1)
+        REQUIRE(!get_bodies_msg->packet_present());  // no new request, we reached max_header (=1)
 
         REQUIRE(!bs.body_requests_.empty());
         auto rs = bs.body_requests_.find(header1.number);
         REQUIRE(rs != bs.body_requests_.end());
-        BodySequence_ForTest::BodyRequest& request_status = rs->second;
+        BodySequenceForTest::BodyRequest& request_status = rs->second;
 
         REQUIRE(request_status.ready == true);        // found on announcements
         REQUIRE(request_status.to_announce == true);  // to announce

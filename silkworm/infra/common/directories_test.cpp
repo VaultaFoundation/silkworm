@@ -18,11 +18,11 @@
 
 #include <fstream>
 
-#include <catch2/catch.hpp>
+#include <catch2/catch_test_macros.hpp>
 
 namespace silkworm {
 
-TEST_CASE("DataDirectory") {
+TEST_CASE("DataDirectory::deploy") {
     {
         // Open and create a storage path
         TemporaryDirectory tmp_dir0;
@@ -35,15 +35,9 @@ TEST_CASE("DataDirectory") {
         std::filesystem::remove_all(data_dir.path());
         REQUIRE(data_dir.exists() == false);
     }
+}
 
-    {
-        // Open datadir from current process running path
-        DataDirectory data_dir{std::filesystem::path(), false};
-        REQUIRE(data_dir.is_pristine() == false);
-        REQUIRE(data_dir.exists() == true);
-        REQUIRE_NOTHROW(data_dir.deploy());
-    }
-
+TEST_CASE("DataDirectory::from_chaindata") {
     TemporaryDirectory tmp_dir1;
     std::filesystem::path fake_path{tmp_dir1.path() / "nonexistentpath"};
     std::filesystem::path fake_path_root{fake_path.root_path()};
@@ -62,21 +56,21 @@ TEST_CASE("DataDirectory") {
     {
         DataDirectory data_dir{DataDirectory::from_chaindata(fake_path)};
         REQUIRE_NOTHROW(data_dir.deploy());
-        REQUIRE(data_dir.etl().is_pristine());
+        REQUIRE(data_dir.temp().is_empty());
 
         // Drop a file into etl temp
         {
-            std::string filename{data_dir.etl().path().string() + "/fake.txt"};
+            std::string filename{data_dir.temp().path().string() + "/fake.txt"};
             std::ofstream f(filename.c_str());
             f << "Some fake text" << std::flush;
             f.close();
         }
-        std::filesystem::path etl_subpath{data_dir.etl().path() / "subdir"};
+        std::filesystem::path etl_subpath{data_dir.temp().path() / "subdir"};
         std::filesystem::create_directories(etl_subpath);
-        REQUIRE(data_dir.etl().is_pristine() == false);
-        REQUIRE(data_dir.etl().size() != 0);
-        data_dir.etl().clear();
-        REQUIRE(data_dir.etl().is_pristine() == true);
+        REQUIRE_FALSE(data_dir.temp().is_empty());
+        REQUIRE(data_dir.temp().size() != 0);
+        data_dir.temp().clear();
+        REQUIRE(data_dir.temp().is_empty());
     }
 }
 

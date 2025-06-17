@@ -14,6 +14,7 @@
    limitations under the License.
 */
 
+#include <algorithm>
 #include <atomic>
 #include <filesystem>
 #include <iostream>
@@ -28,19 +29,20 @@
 #include <nlohmann/json.hpp>
 
 #include <silkworm/core/chain/config.hpp>
-#include <silkworm/core/common/as_range.hpp>
-#include <silkworm/core/common/cast.hpp>
+#include <silkworm/core/chain/genesis.hpp>
 #include <silkworm/core/common/test_util.hpp>
-#include <silkworm/core/execution/evm.hpp>
 #include <silkworm/core/protocol/blockchain.hpp>
 #include <silkworm/core/protocol/ethash_rule_set.hpp>
 #include <silkworm/core/protocol/intrinsic_gas.hpp>
 #include <silkworm/core/state/in_memory_state.hpp>
+#include <silkworm/core/types/address.hpp>
+#include <silkworm/core/types/evmc_bytes32.hpp>
 #include <silkworm/infra/common/stopwatch.hpp>
 #include <silkworm/infra/common/terminal.hpp>
 #include <silkworm/infra/concurrency/thread_pool.hpp>
 
-// See https://ethereum-tests.readthedocs.io
+// See EEST: https://ethereum.github.io/execution-spec-tests.
+// See legacy tests: https://ethereum-tests.readthedocs.io.
 
 using namespace silkworm;
 using namespace silkworm::protocol;
@@ -53,48 +55,37 @@ static const fs::path kBlockchainDir{"BlockchainTests"};
 
 static const fs::path kTransactionDir{"TransactionTests"};
 
-static const std::vector<fs::path> kSlowTests{
+static const std::array kSlowTests{
     kBlockchainDir / "GeneralStateTests" / "stTimeConsuming",
     kBlockchainDir / "GeneralStateTests" / "VMTests" / "vmPerformance",
 };
 
-static const std::vector<fs::path> kFailingTests{
+static const std::array kFailingTests{
+    // Tests related to create address collision. Silkworm and evmone implement this scenario
+    // differently:
+    // Silkworm follows the older EIP-684 and clears the created account storage if not empty,
+    // evmone tries to follow the newer EIP-7610 to revert the creation, however Silkworm
+    // is not able to provide enough information to evmone to identify non-empty storage,
+    // in the result the non-empty storage remains unchanged.
+    // This scenarion don't happen in real networks. The desired behavior for implementations
+    // is still being discussed.
+    kBlockchainDir / "GeneralStateTests" / "stCreate2" / "create2collisionStorage.json",
+    kBlockchainDir / "GeneralStateTests" / "stCreate2" / "create2collisionStorageParis.json",
+    kBlockchainDir / "GeneralStateTests" / "stCreate2" / "RevertInCreateInInitCreate2.json",
+    kBlockchainDir / "GeneralStateTests" / "stCreate2" / "RevertInCreateInInitCreate2Paris.json",
+    kBlockchainDir / "GeneralStateTests" / "stRevertTest" / "RevertInCreateInInit.json",
+    kBlockchainDir / "GeneralStateTests" / "stRevertTest" / "RevertInCreateInInit_Paris.json",
+    kBlockchainDir / "GeneralStateTests" / "stSStoreTest" / "InitCollision.json",
+    kBlockchainDir / "GeneralStateTests" / "stSStoreTest" / "InitCollisionParis.json",
     kTransactionDir / "ttRSValue" / "TransactionWithRSvalue0.json",
 };
 
 static constexpr size_t kColumnWidth{80};
 
-ObjectPool<evmone::ExecutionState> execution_state_pool{/*thread_safe=*/true};
+/// External EVMC VM.
+/// It is used in potential multiple test execution threads
+/// so usage may be broken if the VM is not thread-safe.
 evmc_vm* exo_evm{nullptr};
-
-// https://ethereum-tests.readthedocs.io/en/latest/test_types/blockchain_tests.html#pre-prestate-section
-void init_pre_state(const nlohmann::json& pre, State& state) {
-    for (const auto& entry : pre.items()) {
-        const evmc::address address{to_evmc_address(from_hex(entry.key()).value())};
-        const nlohmann::json& j{entry.value()};
-
-        Account account;
-        const auto balance{intx::from_string<intx::uint256>(j["balance"].get<std::string>())};
-        account.balance = balance;
-        const auto nonce_str{j["nonce"].get<std::string>()};
-        account.nonce = std::stoull(nonce_str, nullptr, /*base=*/16);
-
-        const Bytes code{from_hex(j["code"].get<std::string>()).value()};
-        if (!code.empty()) {
-            account.incarnation = kDefaultIncarnation;
-            account.code_hash = bit_cast<evmc_bytes32>(keccak256(code));
-            state.update_account_code(address, account.incarnation, account.code_hash, code);
-        }
-
-        state.update_account(address, /*initial=*/std::nullopt, account);
-
-        for (const auto& storage : j["storage"].items()) {
-            Bytes key{from_hex(storage.key()).value()};
-            Bytes value{from_hex(storage.value().get<std::string>()).value()};
-            state.update_storage(address, account.incarnation, to_bytes32(key), /*initial=*/{}, to_bytes32(value));
-        }
-    }
-}
 
 enum class Status {
     kPassed,
@@ -124,8 +115,7 @@ Status run_block(const nlohmann::json& json_block, Blockchain& blockchain) {
         return Status::kFailed;
     }
 
-    bool check_state_root{invalid && json_block["expectException"].get<std::string>() == "InvalidStateRoot"};
-
+    const bool check_state_root{true};
     if (ValidationResult err{blockchain.insert_block(block, check_state_root)}; err != ValidationResult::kOk) {
         if (invalid) {
             return Status::kPassed;
@@ -144,14 +134,22 @@ Status run_block(const nlohmann::json& json_block, Blockchain& blockchain) {
 }
 
 bool post_check(const InMemoryState& state, const nlohmann::json& expected) {
-    if (state.number_of_accounts() != expected.size()) {
-        std::cout << "Account number mismatch: " << state.number_of_accounts() << " != " << expected.size()
+    if (state.accounts().size() != expected.size()) {
+        std::cout << "Account number mismatch: " << state.accounts().size() << " != " << expected.size()
                   << std::endl;
+
+        // Find and report accounts missing from the expected set.
+        for (const auto& [addr, _] : state.accounts()) {
+            if (const auto addr_hex = "0x" + hex(addr); !expected.contains(addr_hex)) {
+                std::cout << "Unexpected account: " << addr_hex << std::endl;
+            }
+        }
+
         return false;
     }
 
     for (const auto& entry : expected.items()) {
-        const evmc::address address{to_evmc_address(from_hex(entry.key()).value())};
+        const evmc::address address{hex_to_address(entry.key())};
         const nlohmann::json& j{entry.value()};
 
         std::optional<Account> account{state.read_account(address)};
@@ -175,7 +173,7 @@ bool post_check(const InMemoryState& state, const nlohmann::json& expected) {
         }
 
         auto expected_code{j["code"].get<std::string>()};
-        Bytes actual_code{state.read_code(account->code_hash)};
+        Bytes actual_code{state.read_code(address, account->code_hash)};
         if (actual_code != from_hex(expected_code)) {
             std::cout << "Code mismatch for " << entry.key() << ":\n"
                       << to_hex(actual_code) << " != " << expected_code << std::endl;
@@ -211,6 +209,7 @@ struct [[nodiscard]] RunResults {
 
     constexpr RunResults() = default;
 
+    // NOLINTNEXTLINE(google-explicit-constructor, hicpp-explicit-conversions)
     constexpr RunResults(Status status) {
         switch (status) {
             case Status::kPassed:
@@ -235,6 +234,13 @@ struct [[nodiscard]] RunResults {
 
 // https://ethereum-tests.readthedocs.io/en/latest/test_types/blockchain_tests.html
 RunResults blockchain_test(const nlohmann::json& json_test) {
+    const auto network{json_test["network"].get<std::string>()};
+    const auto config_it{test::kNetworkConfig.find(network)};
+    if (config_it == test::kNetworkConfig.end()) {
+        std::cout << "unknown network " << network << std::endl;
+        return Status::kSkipped;
+    }
+
     Bytes genesis_rlp{from_hex(json_test["genesisRLP"].get<std::string>()).value()};
     ByteView genesis_view{genesis_rlp};
     Block genesis_block;
@@ -243,19 +249,8 @@ RunResults blockchain_test(const nlohmann::json& json_test) {
         return Status::kFailed;
     }
 
-    std::string network{json_test["network"].get<std::string>()};
-    const auto config_it{silkworm::test::kNetworkConfig.find(network)};
-    if (config_it == silkworm::test::kNetworkConfig.end()) {
-        std::cout << "unknown network " << network << std::endl;
-        return Status::kFailed;
-    }
-    const ChainConfig& config{config_it->second};
-
-    InMemoryState state;
-    init_pre_state(json_test["pre"], state);
-
-    Blockchain blockchain{state, config, genesis_block, {}, {}};
-    blockchain.state_pool = &execution_state_pool;
+    InMemoryState state{read_genesis_allocation(json_test["pre"])};
+    Blockchain blockchain{state, config_it->second, genesis_block, {}, {}};
     blockchain.exo_evm = exo_evm;
 
     for (const auto& json_block : json_test["blocks"]) {
@@ -272,16 +267,14 @@ RunResults blockchain_test(const nlohmann::json& json_test) {
             std::cout << "postStateHash mismatch:\n"
                       << to_hex(state_root) << " != " << expected_hex << std::endl;
             return Status::kFailed;
-        } else {
-            return Status::kPassed;
         }
+        return Status::kPassed;
     }
 
     if (post_check(state, json_test["postState"])) {
         return Status::kPassed;
-    } else {
-        return Status::kFailed;
     }
+    return Status::kFailed;
 }
 
 static void print_test_status(std::string_view key, const RunResults& res) {
@@ -304,7 +297,7 @@ std::atomic<size_t> total_skipped{0};
 
 using RunnerFunc = RunResults (*)(const nlohmann::json&);
 
-void run_test_file(const fs::path& file_path, RunnerFunc runner) {
+void run_test_file(const fs::path& file_path, RunnerFunc runner, std::string_view filter) {
     std::ifstream in{file_path.string()};
     nlohmann::json json;
 
@@ -320,7 +313,10 @@ void run_test_file(const fs::path& file_path, RunnerFunc runner) {
     RunResults total;
 
     for (const auto& test : json.items()) {
-        const RunResults r{runner(test.value())};
+        if (!filter.empty() && test.key().find(filter) == std::string::npos) {
+            continue;
+        }
+        const RunResults r = runner(test.value());
         total += r;
         if (r.failed || r.skipped) {
             print_test_status(test.key(), r);
@@ -353,41 +349,30 @@ RunResults transaction_test(const nlohmann::json& j) {
             if (should_be_valid) {
                 std::cout << "Failed to decode valid transaction" << std::endl;
                 return Status::kFailed;
-            } else {
-                continue;
             }
+            continue;
         }
 
-        const ChainConfig& config{silkworm::test::kNetworkConfig.at(entry.key())};
-        const evmc_revision rev{config.revision(BlockHeader{.number=0,.timestamp=0})};
-
-        /* pre_validate_transaction checks for invalid signature only if from is empty, which means sender recovery
-         * phase (which btw also verifies signature) was not triggered yet. In the context of tests, instead, from is
-         * already valued from the json rlp payload: this makes pre_validate_transaction to incorrectly skip the
-         * validation signature. Hence, we reset from to nullopt to allow proper validation flow. In any case, sender
-         * recovery would be performed anyway immediately after this block.
-         */
-        txn.from.reset();
+        const ChainConfig& config{test::kNetworkConfig.at(entry.key())};
+        const evmc_revision rev{config.revision(BlockHeader{.number=0, .timestamp=0})};
 
         if (ValidationResult err{
                 pre_validate_transaction(txn, rev, config.chain_id, /*base_fee_per_gas=*/std::nullopt,
-                                         /*data_gas_price=*/std::nullopt, 0, {})};
+                                         /*blob_gas_price=*/std::nullopt, 0, {})};
             err != ValidationResult::kOk) {
             if (should_be_valid) {
                 std::cout << "Validation error " << magic_enum::enum_name<ValidationResult>(err) << std::endl;
                 return Status::kFailed;
-            } else {
-                continue;
             }
+            continue;
         }
 
-        txn.recover_sender();
-        if (should_be_valid && !txn.from.has_value()) {
+        if (should_be_valid && !txn.sender()) {
             std::cout << "Failed to recover sender" << std::endl;
             return Status::kFailed;
         }
 
-        if (!should_be_valid && txn.from.has_value()) {
+        if (!should_be_valid && txn.sender()) {
             std::cout << entry.key() << "\n"
                       << "Sender recovered for invalid transaction" << std::endl;
             return Status::kFailed;
@@ -398,9 +383,9 @@ RunResults transaction_test(const nlohmann::json& j) {
         }
 
         const std::string expected_sender{test["sender"].get<std::string>()};
-        if (txn.from != to_evmc_address(*from_hex(expected_sender))) {
+        if (txn.sender() != hex_to_address(expected_sender)) {
             std::cout << "Sender mismatch for " << entry.key() << ":\n"
-                      << to_hex(*txn.from) << " != " << expected_sender << std::endl;
+                      << *txn.sender() << " != " << expected_sender << std::endl;
             return Status::kFailed;
         }
 
@@ -422,7 +407,7 @@ Status individual_difficulty_test(const nlohmann::json& j, const ChainConfig& co
     auto parent_timestamp{std::stoull(j["parentTimestamp"].get<std::string>(), nullptr, 0)};
     auto parent_difficulty{intx::from_string<intx::uint256>(j["parentDifficulty"].get<std::string>())};
     auto current_timestamp{std::stoull(j["currentTimestamp"].get<std::string>(), nullptr, 0)};
-    auto block_number{std::stoull(j["currentBlockNumber"].get<std::string>(), nullptr, 0)};
+    auto block_num{std::stoull(j["currentBlockNumber"].get<std::string>(), nullptr, 0)};
     auto current_difficulty{intx::from_string<intx::uint256>(j["currentDifficulty"].get<std::string>())};
 
     bool parent_has_uncles{false};
@@ -438,15 +423,14 @@ Status individual_difficulty_test(const nlohmann::json& j, const ChainConfig& co
         }
     }
 
-    intx::uint256 calculated_difficulty{EthashRuleSet::difficulty(BlockHeader{.number=block_number, .timestamp=current_timestamp}, parent_difficulty,
+    intx::uint256 calculated_difficulty{EthashRuleSet::difficulty(block_num, current_timestamp, parent_difficulty,
                                                                   parent_timestamp, parent_has_uncles, config)};
     if (calculated_difficulty == current_difficulty) {
         return Status::kPassed;
-    } else {
-        std::cout << "Difficulty mismatch for block " << block_number << "\n"
-                  << hex(calculated_difficulty) << " != " << hex(current_difficulty) << std::endl;
-        return Status::kFailed;
     }
+    std::cout << "Difficulty mismatch for block " << block_num << "\n"
+              << hex(calculated_difficulty) << " != " << hex(current_difficulty) << std::endl;
+    return Status::kFailed;
 }
 
 RunResults difficulty_tests(const nlohmann::json& outer) {
@@ -457,7 +441,7 @@ RunResults difficulty_tests(const nlohmann::json& outer) {
             continue;
         }
 
-        const ChainConfig& config{silkworm::test::kNetworkConfig.at(network.key())};
+        const ChainConfig& config{test::kNetworkConfig.at(network.key())};
 
         for (const auto& test : network.value().items()) {
             const Status status{individual_difficulty_test(test.value(), config)};
@@ -470,8 +454,8 @@ RunResults difficulty_tests(const nlohmann::json& outer) {
 
 bool exclude_test(const fs::path& p, const fs::path& root_dir, bool include_slow_tests) {
     const auto path_fits = [&p, &root_dir](const fs::path& e) { return root_dir / e == p; };
-    return as_range::any_of(kFailingTests, path_fits) ||
-           (!include_slow_tests && as_range::any_of(kSlowTests, path_fits));
+    return std::ranges::any_of(kFailingTests, path_fits) ||
+           (!include_slow_tests && std::ranges::any_of(kSlowTests, path_fits));
 }
 
 int main(int argc, char* argv[]) {
@@ -480,22 +464,25 @@ int main(int argc, char* argv[]) {
 
     CLI::App app{"Run Ethereum EL tests"};
 
-    std::string evm_path{};
+    std::string evm_path;
     app.add_option("--evm", evm_path, "Path to EVMC-compliant VM");
     std::string tests_path{SILKWORM_ETHEREUM_TESTS_DIR};
     app.add_option("--tests", tests_path, "Path to Ethereum EL tests")
         ->capture_default_str()
         ->check(CLI::ExistingDirectory);
+    std::string test_name_filter;
+    app.add_option("--filter", test_name_filter, "Inclusion filter matching the test names to be executed")
+        ->capture_default_str();
     unsigned num_threads{std::thread::hardware_concurrency()};
     app.add_option("--threads", num_threads, "Number of parallel threads")->capture_default_str();
     bool include_slow_tests{false};
     app.add_flag("--slow", include_slow_tests, "Run slow tests");
 
-    CLI11_PARSE(app, argc, argv);
+    CLI11_PARSE(app, argc, argv)
     init_terminal();
 
     if (!evm_path.empty()) {
-        evmc_loader_error_code err;
+        evmc_loader_error_code err{EVMC_LOADER_UNSPECIFIED_ERROR};
         exo_evm = evmc_load_and_configure(evm_path.c_str(), &err);
         if (err) {
             std::cerr << "Failed to load EVM: " << evmc_last_error_msg() << std::endl;
@@ -503,7 +490,7 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    size_t stack_size{40 * kMebi};
+    size_t stack_size{50 * kMebi};
 #ifdef NDEBUG
     stack_size = 16 * kMebi;
 #endif
@@ -518,16 +505,20 @@ int main(int argc, char* argv[]) {
     };
 
     for (const auto& entry : kTestTypes) {
-        const fs::path& dir{entry.first};
+        const fs::path& dir{root_dir / entry.first};
         const RunnerFunc runner{entry.second};
 
-        for (auto i = fs::recursive_directory_iterator(root_dir / dir); i != fs::recursive_directory_iterator{}; ++i) {
+        if (!fs::exists(dir)) {
+            continue;
+        }
+
+        for (auto i = fs::recursive_directory_iterator(dir); i != fs::recursive_directory_iterator{}; ++i) {
             if (exclude_test(*i, root_dir, include_slow_tests)) {
                 ++total_skipped;
                 i.disable_recursion_pending();
             } else if (fs::is_regular_file(i->path()) && i->path().extension() == ".json") {
                 const fs::path path{*i};
-                thread_pool.push_task([path, runner]() { run_test_file(path, runner); });
+                thread_pool.push_task([=]() { run_test_file(path, runner, test_name_filter); });
             }
         }
     }

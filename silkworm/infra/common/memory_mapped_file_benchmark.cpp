@@ -26,9 +26,9 @@
 
 #include "memory_mapped_file.hpp"
 
-constexpr uint64_t k4MiBFileSize{4u * silkworm::kMebi};
+static constexpr uint64_t k4MiBFileSize{4u * silkworm::kMebi};
 
-static inline std::filesystem::path create_random_temporary_file(int64_t file_size) {
+static std::filesystem::path create_random_temporary_file(int64_t file_size) {
     auto tmp_file = silkworm::TemporaryDirectory::get_unique_temporary_path();
     std::ofstream tmp_stream{tmp_file, std::ios_base::binary};
     silkworm::RandomNumber rnd{0, 255};
@@ -45,10 +45,10 @@ static void benchmark_checksum_ifstream(benchmark::State& state) {
     const auto tmp_file_path = create_random_temporary_file(state.range(0));
 
     for ([[maybe_unused]] auto _ : state) {
-        std::unique_ptr<char[]> buffer{new char[static_cast<std::size_t>(kPageSize)]};
+        std::unique_ptr<char[]> buffer{new char[static_cast<size_t>(kPageSize)]};
         std::ifstream snapshot_stream{tmp_file_path, std::ifstream::binary};
         int checksum{0};
-        std::size_t count{0};
+        size_t count{0};
         while (snapshot_stream) {
             snapshot_stream.read(buffer.get(), kPageSize);
             for (size_t i{0}; std::cmp_less(i, snapshot_stream.gcount()); ++i, ++count) {
@@ -69,9 +69,7 @@ static void benchmark_checksum_memory_mapped_file(benchmark::State& state) {
         silkworm::MemoryMappedFile mapped_file{tmp_file_path};
         mapped_file.advise_sequential();
         int checksum{0};
-        std::size_t count{0};
-        for (auto it{mapped_file.address()}; count < mapped_file.length(); ++it, ++count) {
-            const auto byte{*it};
+        for (auto byte : mapped_file.region()) {
             checksum += byte;
         }
         benchmark::DoNotOptimize(checksum);

@@ -16,21 +16,22 @@
 
 #include "peer_id.hpp"
 
-#include <silkworm/infra/grpc/interfaces/types.hpp>
+#include <silkworm/infra/grpc/common/conversion.hpp>
 
 namespace silkworm::sentry::grpc::interfaces {
 
 namespace proto_types = ::types;
+using namespace silkworm::rpc;
 
-sentry::common::EccPublicKey peer_public_key_from_id(const ::types::H512& peer_id) {
-    return sentry::common::EccPublicKey::deserialize(bytes_from_H512(peer_id));
+sentry::EccPublicKey peer_public_key_from_id(const ::types::H512& peer_id) {
+    return sentry::EccPublicKey::deserialize(bytes_from_h512(peer_id));
 }
 
-proto_types::H512 peer_id_from_public_key(const sentry::common::EccPublicKey& key) {
-    return *H512_from_bytes(key.serialized());
+proto_types::H512 peer_id_from_public_key(const sentry::EccPublicKey& key) {
+    return *h512_from_bytes(key.serialized());
 }
 
-std::string peer_id_string_from_public_key(const sentry::common::EccPublicKey& key) {
+std::string peer_id_string_from_public_key(const sentry::EccPublicKey& key) {
     return key.hex();
 }
 

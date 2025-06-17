@@ -14,7 +14,7 @@
    limitations under the License.
 */
 
-#include <catch2/catch.hpp>
+#include <catch2/catch_test_macros.hpp>
 
 #include <silkworm/core/common/util.hpp>
 #include <silkworm/core/rlp/encode_vector.hpp>
@@ -22,7 +22,7 @@
 namespace silkworm {
 
 template <typename T>
-static Bytes encoded(T x) {
+static Bytes encoded(const T& x) {
     Bytes s{};
     silkworm::rlp::encode(s, x);
     return s;

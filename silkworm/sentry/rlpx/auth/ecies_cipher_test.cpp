@@ -16,16 +16,18 @@
 
 #include "ecies_cipher.hpp"
 
-#include <catch2/catch.hpp>
+#include <catch2/catch_test_macros.hpp>
 
 #include <silkworm/core/common/util.hpp>
 #include <silkworm/sentry/common/ecc_key_pair.hpp>
 #include <silkworm/sentry/rlpx/crypto/aes.hpp>
 
+#include "ecies_cipher_error.hpp"
+
 namespace silkworm::sentry::rlpx::auth {
 
 TEST_CASE("EciesCipher.encrypt_decrypt_message") {
-    common::EccKeyPair receiver_key;
+    EccKeyPair receiver_key;
 
     Bytes expected_plain_text = {1, 2, 3, 4, 5};
     expected_plain_text.resize(crypto::kAESBlockSize);
@@ -43,7 +45,7 @@ TEST_CASE("EciesCipher.encrypt_decrypt_message") {
 }
 
 TEST_CASE("EciesCipher.encrypt_decrypt_bytes") {
-    common::EccKeyPair receiver_key;
+    EccKeyPair receiver_key;
 
     Bytes expected_plain_text = {1, 2, 3, 4, 5};
     expected_plain_text.resize(crypto::kAESBlockSize);
@@ -62,6 +64,19 @@ TEST_CASE("EciesCipher.decrypt") {
 
     Bytes plain_text = EciesCipher::decrypt(data, private_key, mac_extra_data);
     CHECK_FALSE(plain_text.empty());
+}
+
+TEST_CASE("EciesCipher.decrypt.invalid_mac") {
+    Bytes data = from_hex("0487ec9b69968ecf4d5904964f24fb9da81ca717bd04c05b8a9e1d27bf612a96d2aca42d25d365ed5d633b0f5abd78d25302be3ae2db29d69212117176f2a6bb96062157fdfc018304de8a6678f3e634e68993357f7bccb1cd9a6f36a239b3c2b0b74596f95222cdda7356b17847b5dde1f8f736adb3313ec170b32eb4693fc359b44d3a65defe7cbee08c8ae8f523aa617a2ed93809d484b30d97d690f092d9a773b60e1ffbc87307ab27b1ef17934eedcf4dbdad486c9d5ebb4e3eda065b22b4aea97ef89c67cfa79efdf49aaeb433eae90ce9efaa14364e8b37c0d2c72aca7a6653f1bb109316346716c0a314ea07fdebec40f08ad48d59a54010e1135dde853cd1c5138ed19eb99b4fc37994865aa4086627352c87747ccea81f1449c38ecf").value();
+    Bytes private_key = from_hex("36a7edad64d51a568b00e51d3fa8cd340aa704153010edf7f55ab3066ca4ef21").value();
+    Bytes mac_extra_data = from_hex("0121").value();
+
+    try {
+        EciesCipher::decrypt(data, private_key, mac_extra_data);
+        FAIL();
+    } catch (const EciesCipherError& ex) {
+        CHECK(ex.code() == EciesCipherErrorCode::kInvalidMAC);
+    }
 }
 
 }  // namespace silkworm::sentry::rlpx::auth

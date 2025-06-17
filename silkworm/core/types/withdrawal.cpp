@@ -18,14 +18,8 @@
 
 #include <silkworm/core/rlp/decode_vector.hpp>
 #include <silkworm/core/rlp/encode.hpp>
-namespace silkworm {
+#include <silkworm/core/types/address.hpp>
 
-bool operator==(const Withdrawal& a, const Withdrawal& b) {
-    return a.index == b.index && a.validator_index == b.validator_index &&
-           a.address == b.address && a.amount == b.amount;
-}
-
-}
 namespace silkworm::rlp {
 
 static Header header(const Withdrawal& w) {

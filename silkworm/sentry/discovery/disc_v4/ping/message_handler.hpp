@@ -20,7 +20,8 @@
 
 #include <boost/asio/ip/udp.hpp>
 
-#include <silkworm/core/common/base.hpp>
+#include <silkworm/core/common/bytes.hpp>
+#include <silkworm/sentry/common/ecc_public_key.hpp>
 
 #include "ping_message.hpp"
 #include "pong_message.hpp"
@@ -29,8 +30,8 @@ namespace silkworm::sentry::discovery::disc_v4::ping {
 
 struct MessageHandler {
     virtual ~MessageHandler() = default;
-    virtual Task<void> on_ping(PingMessage message, boost::asio::ip::udp::endpoint sender_endpoint, Bytes ping_packet_hash) = 0;
-    virtual Task<void> on_pong(PongMessage message) = 0;
+    virtual Task<void> on_ping(PingMessage message, EccPublicKey sender_public_key, boost::asio::ip::udp::endpoint sender_endpoint, Bytes ping_packet_hash) = 0;
+    virtual Task<void> on_pong(PongMessage message, EccPublicKey sender_public_key) = 0;
 };
 
 }  // namespace silkworm::sentry::discovery::disc_v4::ping

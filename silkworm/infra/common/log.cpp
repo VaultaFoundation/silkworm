@@ -24,24 +24,47 @@
 #include <stdexcept>
 #include <thread>
 
+#include <absl/log/globals.h>
+#include <absl/log/initialize.h>
+#include <absl/strings/ascii.h>
 #include <absl/time/clock.h>
+
+#include <silkworm/infra/grpc/common/util.hpp>
 
 namespace silkworm::log {
 
 //! The fixed size for thread name in log traces
-constexpr auto kThreadNameFixedSize{11};
+static constexpr size_t kThreadNameFixedSize = 11;
 
 static Settings settings_{};
 static std::mutex out_mtx{};
 static std::unique_ptr<std::fstream> file_{nullptr};
+static bool is_terminal{false};
 thread_local std::string thread_name_{};
+static std::optional<AbseilLogGuard<log::AbseilToSilkwormLogSink>> absl_log_guard;
+static std::once_flag absl_log_init_once_flag;
 
-void init(Settings& settings) {
+void init(const Settings& settings) {
     settings_ = settings;
     if (!settings_.log_file.empty()) {
         tee_file(std::filesystem::path(settings.log_file));
+        // Forcibly disable colorized output to avoid escape char sequences into log file
+        settings_.log_nocolor = true;
     }
+
+    absl::SetMinLogLevel(settings.log_grpc ? absl_min_log_level_from_silkworm(settings.log_verbosity) : absl::LogSeverityAtLeast::kInfinity);
+    absl::SetGlobalVLogLevel(settings.log_grpc ? absl_max_vlog_level_from_silkworm(settings.log_verbosity) : -1);
+    absl::SetStderrThreshold(absl::LogSeverityAtLeast::kInfinity);
+    if (settings.log_grpc) {
+        absl_log_guard.emplace();
+    } else {
+        absl_log_guard = std::nullopt;
+    }
+    std::call_once(absl_log_init_once_flag, absl::InitializeLog);
+
     init_terminal();
+    is_terminal = settings_.log_std_out ? is_terminal_stdout() : is_terminal_stderr();
+    settings_.log_nocolor = settings_.log_nocolor || !is_terminal;
 }
 
 void tee_file(const std::filesystem::path& path) {
@@ -73,7 +96,7 @@ std::string get_thread_name() {
     return thread_name_;
 }
 
-static inline std::pair<const char*, const char*> get_level_settings(Level level) {
+static std::pair<const char*, const char*> get_level_settings(Level level) {
     switch (level) {
         case Level::kTrace:
             return {"TRACE", kColorCoal};
@@ -92,16 +115,16 @@ static inline std::pair<const char*, const char*> get_level_settings(Level level
     }
 }
 
-struct separate_thousands : std::numpunct<char> {
+struct SeparateThousands : std::numpunct<char> {
     char separator;
-    explicit separate_thousands(char sep) : separator(sep) {}
-    [[nodiscard]] char do_thousands_sep() const override { return separator; }
-    [[nodiscard]] string_type do_grouping() const override { return "\3"; }  // groups of 3 digit
+    explicit SeparateThousands(char sep) : separator(sep) {}
+    char do_thousands_sep() const override { return separator; }
+    string_type do_grouping() const override { return "\3"; }  // groups of 3 digit
 };
 
 void prepare_for_logging(std::ostream& ss) {
     if (settings_.log_thousands_sep != 0) {
-        ss.imbue(std::locale(ss.getloc(), new separate_thousands(settings_.log_thousands_sep)));
+        ss.imbue(std::locale(ss.getloc(), new SeparateThousands(settings_.log_thousands_sep)));
     }
 }
 
@@ -109,18 +132,25 @@ BufferBase::BufferBase(Level level) : should_print_(level <= settings_.log_verbo
     if (!should_print_) return;
 
     if (settings_.log_thousands_sep != 0) {
-        ss_.imbue(std::locale(ss_.getloc(), new separate_thousands(settings_.log_thousands_sep)));
+        ss_.imbue(std::locale(ss_.getloc(), new SeparateThousands(settings_.log_thousands_sep)));
     }
 
-    auto [prefix, color] = get_level_settings(level);
+    auto [log_level, color] = get_level_settings(level);
 
     // Prefix
-    ss_ << kColorReset << " " << color << prefix << kColorReset << " ";
+    auto log_tag{settings_.log_trim ? absl::StripAsciiWhitespace(log_level).substr(0, 4) : log_level};
+    std::string_view padding = settings_.log_trim ? "" : " ";
+    ss_ << kColorReset
+        << (settings_.log_trim && !is_terminal ? "[" : padding) << color << log_tag
+        << kColorReset
+        << (settings_.log_trim && !is_terminal ? "] " : padding);
 
     // TimeStamp
-    static const absl::TimeZone tz{settings_.log_utc ? absl::LocalTimeZone() : absl::UTCTimeZone()};
+    static const absl::TimeZone kTz{settings_.log_utc ? absl::UTCTimeZone() : absl::LocalTimeZone()};
     absl::Time now{absl::Now()};
-    ss_ << kColorCyan << "[" << absl::FormatTime("%m-%d|%H:%M:%E3S", now, tz) << " " << tz << "] " << kColorReset;
+
+    auto log_timezone{settings_.log_timezone ? std::string{" "} + kTz.name() : ""};
+    ss_ << kColorWhite << "[" << absl::FormatTime("%m-%d|%H:%M:%E3S", now, kTz) << log_timezone << "] " << kColorReset;
 
     // ThreadId
     if (settings_.log_threads) {
@@ -136,22 +166,22 @@ void BufferBase::flush() {
     if (!should_print_) return;
 
     // Pattern to identify colorization
-    static const std::regex color_pattern("(\\\x1b\\[[0-9;]{1,}m)");
+    static const std::regex kColorPattern("(\\\x1b\\[[0-9;]{1,}m)");
 
     bool colorized{true};
     std::string line{ss_.str()};
     if (settings_.log_nocolor) {
-        line = std::regex_replace(line, color_pattern, "");
+        line = std::regex_replace(line, kColorPattern, "");
         colorized = false;
     }
-    std::unique_lock out_lck{out_mtx};
+    std::scoped_lock out_lck{out_mtx};
     auto& out = settings_.log_std_out ? std::cout : std::cerr;
-    out << line << std::endl;
+    out << line << '\n';
     if (file_ && file_->is_open()) {
         if (colorized) {
-            line = std::regex_replace(line, color_pattern, "");
+            line = std::regex_replace(line, kColorPattern, "");
         }
-        *file_ << line << std::endl;
+        *file_ << line << '\n';
     }
 }
 

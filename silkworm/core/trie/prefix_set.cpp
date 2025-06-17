@@ -17,13 +17,14 @@
 #include "prefix_set.hpp"
 
 #include <algorithm>
+#include <utility>
 
 namespace silkworm::trie {
 
 void PrefixSet::insert(ByteView key, bool marker) { insert(Bytes(key), marker); }
 
 void PrefixSet::insert(Bytes&& key, bool marker) {
-    keys_.emplace_back(key, marker);
+    keys_.emplace_back(std::move(key), marker);
     sorted_ = false;
 }
 
@@ -79,8 +80,9 @@ std::pair<bool, ByteView> PrefixSet::contains_and_next_marked(ByteView prefix, s
 
 void PrefixSet::ensure_sorted() {
     if (!sorted_) {
-        std::sort(keys_.begin(), keys_.end());
-        keys_.erase(std::unique(keys_.begin(), keys_.end()), keys_.end());
+        std::ranges::sort(keys_);
+        const auto [first, last] = std::ranges::unique(keys_);
+        keys_.erase(first, last);
         sorted_ = true;
     }
 }

@@ -14,22 +14,24 @@
    limitations under the License.
 ]]
 
-if("${CMAKE_CXX_COMPILER_ID}" STREQUAL "MSVC")
+include(${CMAKE_CURRENT_LIST_DIR}/compiler_settings_sanitize.cmake)
+
+if(MSVC)
 
   message("MSVC_VERSION = ${MSVC_VERSION}")
   message("MSVC_CXX_ARCHITECTURE_ID = ${MSVC_CXX_ARCHITECTURE_ID}")
 
   # cmake-format: off
 
-  add_definitions(-D_WIN32_WINNT=0x0602)  # Min Windows 8
-  add_definitions(-DVC_EXTRALEAN)         # Process windows headers faster ...
-  add_definitions(-DWIN32_LEAN_AND_MEAN)  # ... and prevent winsock mismatch with Boost's
-  add_definitions(-DNOMINMAX)             # Prevent MSVC to tamper with std::min/std::max
-  add_definitions(-DPSAPI_VERSION=2)      # For process info
+  add_compile_definitions(_WIN32_WINNT=0x0602)  # Min Windows 8
+  add_compile_definitions(VC_EXTRALEAN)         # Process windows headers faster ...
+  add_compile_definitions(WIN32_LEAN_AND_MEAN)  # ... and prevent winsock mismatch with Boost's
+  add_compile_definitions(NOMINMAX)             # Prevent MSVC to tamper with std::min/std::max
+  add_compile_definitions(PSAPI_VERSION=2)      # For process info
 
   # LINK : fatal error LNK1104: cannot open file 'libboost_date_time-vc142-mt-x64-1_72.lib
   # is solved by this (issue only for MVC)
-  add_definitions(-DBOOST_DATE_TIME_NO_LIB)
+  add_compile_definitions(BOOST_DATE_TIME_NO_LIB)
 
 
   add_compile_options(/MP)            # Enable parallel compilation
@@ -65,10 +67,6 @@ if("${CMAKE_CXX_COMPILER_ID}" STREQUAL "MSVC")
 
 elseif("${CMAKE_CXX_COMPILER_ID}" MATCHES "GNU")
 
-  if(CMAKE_BUILD_TYPE STREQUAL "Release")
-    add_compile_options(-g1)
-  endif()
-
   # coroutines support
   if(NOT SILKWORM_WASM_API)
     add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-fcoroutines>)
@@ -81,33 +79,28 @@ elseif("${CMAKE_CXX_COMPILER_ID}" MATCHES ".*Clang$")
     add_link_options(-fprofile-instr-generate -fcoverage-mapping)
   endif()
 
-  if(CMAKE_BUILD_TYPE STREQUAL "Release")
-    add_compile_options(-gline-tables-only)
-  endif()
-
-  # coroutines support
+  # configure libc++
   if(NOT SILKWORM_WASM_API)
     add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-stdlib=libc++>)
+    # std::views::join is experimental on clang < 18 and Apple clang < 16
+    if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang" AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 18)
+      add_compile_options(-fexperimental-library)
+    endif()
+    if(CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang" AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 16)
+      add_compile_options(-fexperimental-library)
+    endif()
     link_libraries(c++)
     link_libraries(c++abi)
   endif()
 
 else()
-
-  message(
-    WARNING
-      "${CMAKE_CXX_COMPILER_ID} is not tested. Should you stumble into any issue please report at https://github.com/torquem-ch/silkworm/issues"
-  )
-
+  message(WARNING "${CMAKE_CXX_COMPILER_ID} is not a supported compiler. Use at your own risk.")
 endif()
 
-if(SILKWORM_SANITIZE)
-  set(SILKWORM_SANITIZE_COMPILER_OPTIONS -fno-omit-frame-pointer -fno-sanitize-recover=all
-                                         -fsanitize=${SILKWORM_SANITIZE}
-  )
+if(SILKWORM_SANITIZE_COMPILER_OPTIONS)
   add_compile_options(${SILKWORM_SANITIZE_COMPILER_OPTIONS})
   add_link_options(${SILKWORM_SANITIZE_COMPILER_OPTIONS})
-  add_definitions(-DSILKWORM_SANITIZE)
+  add_compile_definitions(SILKWORM_SANITIZE)
 
   # asio is using atomic_thread_fence in asio::detail::std_fenced_block, unsupported on GCC with thread sanitizer. See:
   # https://gcc.gnu.org/bugzilla/show_bug.cgi?id=97868
@@ -115,7 +108,13 @@ if(SILKWORM_SANITIZE)
   if("${SILKWORM_SANITIZE}" STREQUAL "thread" AND "${CMAKE_CXX_COMPILER_ID}" MATCHES "GNU")
     add_compile_options(-Wno-error=tsan)
   endif()
+
+  # MDBX triggers unaligned access errors in sanitizer builds
+  add_compile_definitions(MDBX_UNALIGNED_OK=0)
 endif()
+
+# Position independent code
+set(CMAKE_POSITION_INDEPENDENT_CODE TRUE)
 
 # Stack
 set(SILKWORM_STACK_SIZE 0x1000000)
@@ -131,6 +130,7 @@ else()
   if("${CMAKE_CXX_COMPILER_ID}" MATCHES ".*Clang$"
      AND NOT SILKWORM_WASM_API
      AND NOT SILKWORM_SANITIZE
+     AND NOT SILKWORM_FUZZER
   )
     add_compile_options(-fsanitize=safe-stack)
     add_link_options(-fsanitize=safe-stack)

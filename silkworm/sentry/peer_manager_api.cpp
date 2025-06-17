@@ -20,27 +20,26 @@
 #include <string>
 #include <vector>
 
-#include <boost/asio/co_spawn.hpp>
 #include <boost/asio/experimental/channel_error.hpp>
 #include <boost/asio/this_coro.hpp>
-#include <boost/asio/use_awaitable.hpp>
 #include <boost/system/errc.hpp>
 #include <boost/system/system_error.hpp>
 
 #include <silkworm/infra/common/log.hpp>
 #include <silkworm/infra/concurrency/awaitable_wait_for_all.hpp>
-#include <silkworm/sentry/rlpx/rlpx_common/disconnect_reason.hpp>
+#include <silkworm/infra/concurrency/spawn.hpp>
+#include <silkworm/sentry/rlpx/common/disconnect_reason.hpp>
 
 namespace silkworm::sentry {
 
 using namespace boost::asio;
 
-Task<void> PeerManagerApi::start(std::shared_ptr<PeerManagerApi> self) {
+Task<void> PeerManagerApi::run(std::shared_ptr<PeerManagerApi> self) {
     using namespace concurrency::awaitable_wait_for_all;
 
     self->peer_manager_.add_observer(std::weak_ptr(self));
 
-    auto start =
+    auto run =
         self->handle_peer_count_calls() &&
         self->handle_peers_calls() &&
         self->handle_peer_calls() &&
@@ -48,7 +47,7 @@ Task<void> PeerManagerApi::start(std::shared_ptr<PeerManagerApi> self) {
         self->handle_peer_events_calls() &&
         self->events_unsubscription_tasks_.wait() &&
         self->forward_peer_events();
-    co_await co_spawn(self->strand_, std::move(start), use_awaitable);
+    co_await concurrency::spawn_task(self->strand_, std::move(run));
 }
 
 Task<void> PeerManagerApi::handle_peer_count_calls() {
@@ -60,7 +59,7 @@ Task<void> PeerManagerApi::handle_peer_count_calls() {
     }
 }
 
-static std::optional<api::api_common::PeerInfo> make_peer_info(rlpx::Peer& peer) {
+static std::optional<api::PeerInfo> make_peer_info(rlpx::Peer& peer) {
     auto url_opt = peer.url();
     if (!url_opt) return std::nullopt;
     auto peer_public_key_opt = peer.peer_public_key();
@@ -74,7 +73,7 @@ static std::optional<api::api_common::PeerInfo> make_peer_info(rlpx::Peer& peer)
         capabilities.push_back(capability.to_string());
     }
 
-    return api::api_common::PeerInfo{
+    return api::PeerInfo{
         url_opt.value(),
         peer.local_endpoint(),
         peer.remote_endpoint(),
@@ -90,8 +89,8 @@ Task<void> PeerManagerApi::handle_peers_calls() {
     while (true) {
         auto call = co_await peers_calls_channel_.receive();
 
-        api::api_common::PeerInfos peers;
-        co_await peer_manager_.enumerate_peers([&peers](std::shared_ptr<rlpx::Peer> peer) {
+        api::PeerInfos peers;
+        co_await peer_manager_.enumerate_peers([&peers](const std::shared_ptr<rlpx::Peer>& peer) {
             auto info_opt = make_peer_info(*peer);
             if (info_opt) {
                 peers.push_back(info_opt.value());
@@ -108,8 +107,8 @@ Task<void> PeerManagerApi::handle_peer_calls() {
         auto call = co_await peer_calls_channel_.receive();
         auto peer_public_key_opt = call.peer_public_key;
 
-        std::optional<api::api_common::PeerInfo> info_opt;
-        co_await peer_manager_.enumerate_peers([&info_opt, peer_public_key_opt](std::shared_ptr<rlpx::Peer> peer) {
+        std::optional<api::PeerInfo> info_opt;
+        co_await peer_manager_.enumerate_peers([&info_opt, &peer_public_key_opt](const std::shared_ptr<rlpx::Peer>& peer) {
             auto key_opt = peer->peer_public_key();
             if (key_opt && peer_public_key_opt && (key_opt.value() == peer_public_key_opt.value())) {
                 info_opt = make_peer_info(*peer);
@@ -125,10 +124,10 @@ Task<void> PeerManagerApi::handle_peer_penalize_calls() {
     while (true) {
         auto peer_public_key_opt = co_await peer_penalize_calls_channel_.receive();
 
-        co_await peer_manager_.enumerate_peers([peer_public_key_opt](std::shared_ptr<rlpx::Peer> peer) {
+        co_await peer_manager_.enumerate_peers([&peer_public_key_opt](const std::shared_ptr<rlpx::Peer>& peer) {
             auto key_opt = peer->peer_public_key();
             if (key_opt && peer_public_key_opt && (key_opt.value() == peer_public_key_opt.value())) {
-                peer->disconnect(rlpx::rlpx_common::DisconnectReason::DisconnectRequested);
+                peer->disconnect(rlpx::DisconnectReason::kDisconnectRequested);
             }
         });
     }
@@ -141,9 +140,9 @@ Task<void> PeerManagerApi::handle_peer_events_calls() {
     while (true) {
         auto call = co_await peer_events_calls_channel_.receive();
 
-        log::Trace("sentry") << "PeerManagerApi::handle_peer_events_calls adding subscription";
+        SILK_TRACE_M("sentry") << "PeerManagerApi::handle_peer_events_calls adding subscription";
 
-        auto events_channel = std::make_shared<concurrency::Channel<api::api_common::PeerEvent>>(executor);
+        auto events_channel = std::make_shared<concurrency::Channel<api::PeerEvent>>(executor);
 
         events_subscriptions_.push_back({
             events_channel,
@@ -161,13 +160,13 @@ Task<void> PeerManagerApi::unsubscribe_peer_events_on_signal(std::shared_ptr<con
         co_await unsubscribe_signal->wait();
     } catch (const boost::system::system_error& ex) {
         if (ex.code() == boost::system::errc::operation_canceled) {
-            log::Debug("sentry") << "PeerManagerApi::unsubscribe_events_on_signal cancelled";
+            SILK_TRACE_M("sentry") << "PeerManagerApi::unsubscribe_events_on_signal cancelled";
             co_return;
         }
-        log::Error("sentry") << "PeerManagerApi::unsubscribe_events_on_signal system_error: " << ex.what();
+        SILK_ERROR_M("sentry") << "PeerManagerApi::unsubscribe_events_on_signal system_error: " << ex.what();
         throw;
     } catch (const std::exception& ex) {
-        log::Error("sentry") << "PeerManagerApi::unsubscribe_events_on_signal exception: " << ex.what();
+        SILK_ERROR_M("sentry") << "PeerManagerApi::unsubscribe_events_on_signal exception: " << ex.what();
         throw;
     }
 
@@ -185,7 +184,7 @@ Task<void> PeerManagerApi::forward_peer_events() {
     while (true) {
         auto event = co_await peer_events_channel_.receive();
 
-        log::Trace("sentry") << "PeerManagerApi::forward_peer_events forwarding an event to subscribers";
+        SILK_TRACE_M("sentry") << "PeerManagerApi::forward_peer_events forwarding an event to subscribers";
 
         for (auto& subscription : events_subscriptions_) {
             try {
@@ -202,26 +201,30 @@ Task<void> PeerManagerApi::forward_peer_events() {
 
 // PeerManagerObserver
 void PeerManagerApi::on_peer_added(std::shared_ptr<rlpx::Peer> peer) {
-    api::api_common::PeerEvent event{
+    api::PeerEvent event{
         peer->peer_public_key(),
-        api::api_common::PeerEventId::kAdded,
+        api::PeerEventId::kAdded,
     };
     bool ok = peer_events_channel_.try_send(std::move(event));
     if (!ok) {
-        log::Warning("sentry") << "PeerManagerApi::on_peer_added too many unprocessed events, ignoring an event";
+        SILK_WARN_M("sentry") << "PeerManagerApi::on_peer_added too many unprocessed events, ignoring an event";
     }
 }
 
 // PeerManagerObserver
 void PeerManagerApi::on_peer_removed(std::shared_ptr<rlpx::Peer> peer) {
-    api::api_common::PeerEvent event{
+    api::PeerEvent event{
         peer->peer_public_key(),
-        api::api_common::PeerEventId::kRemoved,
+        api::PeerEventId::kRemoved,
     };
     bool ok = peer_events_channel_.try_send(std::move(event));
     if (!ok) {
-        log::Warning("sentry") << "PeerManagerApi::on_peer_removed too many unprocessed events, ignoring an event";
+        SILK_WARN_M("sentry") << "PeerManagerApi::on_peer_removed too many unprocessed events, ignoring an event";
     }
+}
+
+// PeerManagerObserver
+void PeerManagerApi::on_peer_connect_error(const EnodeUrl& /*peer_url*/) {
 }
 
 }  // namespace silkworm::sentry

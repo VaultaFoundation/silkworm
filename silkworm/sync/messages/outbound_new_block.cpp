@@ -23,18 +23,23 @@
 
 namespace silkworm {
 
-OutboundNewBlock::OutboundNewBlock(Blocks b, bool f) : blocks_to_announce_{std::move(b)}, is_first_sync_{f} {}
+OutboundNewBlock::OutboundNewBlock(Blocks b, bool is_first_sync)
+    : blocks_to_announce_{std::move(b)}, is_first_sync_{is_first_sync} {}
 
-void OutboundNewBlock::execute(db::ROAccess, HeaderChain&, BodySequence&, SentryClient& sentry) {
+void OutboundNewBlock::execute(db::DataStoreRef, HeaderChain&, BodySequence&, SentryClient& sentry) {
     if (is_first_sync_) return;  // Don't announce blocks during first sync
 
     for (auto& block_ptr : blocks_to_announce_) {
         const BlockEx& block = *block_ptr;
-        NewBlockPacket packet{{block, block.header}, block.td};
-        auto peers = send_packet(sentry, std::move(packet));
+        NewBlockPacket packet{block, block.td};  // NOLINT(cppcoreguidelines-slicing)
+        try {
+            auto peers = send_packet(sentry, std::move(packet));
 
-        // no peers available
-        if (peers.empty()) break;
+            // no peers available
+            if (peers.empty()) break;
+        } catch (const boost::system::system_error& se) {
+            SILK_TRACE << "OutboundNewBlock failed send_packet error: " << se.what();
+        }
     }
 }
 
@@ -49,7 +54,7 @@ std::vector<PeerId> OutboundNewBlock::send_packet(SentryClient& sentry, NewBlock
 
     packet_ = std::move(packet);
     auto peers = sentry.send_message_to_random_peers(*this, kMaxPeers);
-    sent_packets_++;
+    ++sent_packets_;
 
     SILK_TRACE << "Received sentry result of OutboundNewBlock: " << std::to_string(peers.size()) + " peer(s)";
 

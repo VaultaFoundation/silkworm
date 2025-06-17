@@ -18,28 +18,31 @@
 
 #include <iostream>
 
-#include <catch2/catch.hpp>
+#include <catch2/catch_test_macros.hpp>
 
-#include <silkworm/core/common/cast.hpp>
+#include <silkworm/core/common/bytes_to_string.hpp>
 #include <silkworm/core/types/block.hpp>
-#include <silkworm/node/db/genesis.hpp>
-#include <silkworm/node/db/stages.hpp>
-#include <silkworm/node/test/context.hpp>
+#include <silkworm/db/genesis.hpp>
+#include <silkworm/db/test_util/temp_chain_data.hpp>
+#include <silkworm/infra/test_util/log.hpp>
 
 namespace silkworm {
 
-class BodiesStage_ForTest : public stagedsync::BodiesStage {
+class BodiesStageForTest : public stagedsync::BodiesStage {
   public:
     using stagedsync::BodiesStage::BodyDataModel;
 };
-using BodyDataModel_ForTest = BodiesStage_ForTest::BodyDataModel;
+using BodyDataModelForTest = BodiesStageForTest::BodyDataModel;
 
 TEST_CASE("BodiesStage - data model") {
-    test::Context context;
+    db::test_util::TempChainDataStore context;
     context.add_genesis_data();
     context.commit_txn();
 
-    auto chain_config = *context.node_settings().chain_config;
+    datastore::kvdb::RWAccess chaindata = context.chaindata_rw();
+    auto data_model_factory = context.data_model_factory();
+
+    auto& chain_config = context.chain_config();
 
     /* status:
      *         h0
@@ -47,9 +50,10 @@ TEST_CASE("BodiesStage - data model") {
      *         h0 <----- h1
      */
     SECTION("one invalid body after the genesis") {
-        db::RWTxn tx(context.env());
+        auto tx = chaindata.start_rw_tx();
+        db::DataModel data_model = data_model_factory(tx);
 
-        auto header0_hash = db::read_canonical_hash(tx, 0);
+        auto header0_hash = db::read_canonical_header_hash(tx, 0);
         REQUIRE(header0_hash.has_value());
 
         auto header0 = db::read_canonical_header(tx, 0);
@@ -62,18 +66,23 @@ TEST_CASE("BodiesStage - data model") {
         auto header1_hash = block1.header.hash();
         block1.ommers.push_back(BlockHeader{});  // generate error InvalidOmmerHeader
 
-        BlockNum bodies_stage_height = 0;
-        BodyDataModel_ForTest bm(tx, bodies_stage_height, chain_config);
+        BlockNum bodies_stage_block_num = 0;
+        BodyDataModelForTest bm{
+            tx,
+            data_model,
+            bodies_stage_block_num,
+            chain_config,
+        };
 
-        REQUIRE(bm.initial_height() == 0);
-        REQUIRE(bm.highest_height() == 0);
+        REQUIRE(bm.initial_block_num() == 0);
+        REQUIRE(bm.max_block_num() == 0);
         REQUIRE(bm.unwind_needed() == false);
         REQUIRE(bm.unwind_point() == 0);
 
         bm.update_tables(block1, {});
 
         // check internal status
-        REQUIRE(bm.highest_height() == 0);    // block is not valid so no progress
+        REQUIRE(bm.max_block_num() == 0);     // block is not valid so no progress
         REQUIRE(bm.unwind_needed() == true);  // block is not valid -> unwind
         REQUIRE(bm.unwind_point() == 0);      // block-num - 1
         REQUIRE(bm.bad_block() == header1_hash);
@@ -82,9 +91,10 @@ TEST_CASE("BodiesStage - data model") {
     }
 
     SECTION("one valid body after the genesis") {
-        db::RWTxn tx(context.env());
+        auto tx = chaindata.start_rw_tx();
+        db::DataModel data_model = data_model_factory(tx);
 
-        auto header0_hash = db::read_canonical_hash(tx, 0);
+        auto header0_hash = db::read_canonical_header_hash(tx, 0);
         REQUIRE(header0_hash.has_value());
 
         auto header0 = db::read_canonical_header(tx, 0);
@@ -110,19 +120,24 @@ TEST_CASE("BodiesStage - data model") {
         // Note: block1 has zero transactions and zero ommers on mainnet
         REQUIRE(decoding_result);
 
-        BlockNum bodies_stage_height = 0;
-        BodyDataModel_ForTest bm(tx, bodies_stage_height, chain_config);
+        BlockNum bodies_stage_block_num = 0;
+        BodyDataModelForTest bm{
+            tx,
+            data_model,
+            bodies_stage_block_num,
+            chain_config,
+        };
 
         // check internal status
-        REQUIRE(bm.initial_height() == 0);
-        REQUIRE(bm.highest_height() == 0);
+        REQUIRE(bm.initial_block_num() == 0);
+        REQUIRE(bm.max_block_num() == 0);
         REQUIRE(bm.unwind_needed() == false);
         REQUIRE(bm.unwind_point() == 0);
 
         bm.update_tables(block1, {});  // validation must pass
 
         // check internal status
-        REQUIRE(bm.highest_height() == 1);
+        REQUIRE(bm.max_block_num() == 1);
         REQUIRE(bm.unwind_needed() == false);
         REQUIRE(bm.unwind_point() == 0);
 

@@ -16,10 +16,10 @@
 
 #include "ecies_cipher.hpp"
 
-#include <cassert>
 #include <memory>
 #include <stdexcept>
 
+#include <silkworm/core/common/assert.hpp>
 #include <silkworm/core/common/endian.hpp>
 #include <silkworm/infra/common/secp256k1_context.hpp>
 #include <silkworm/sentry/common/ecc_key_pair.hpp>
@@ -27,24 +27,26 @@
 #include <silkworm/sentry/rlpx/crypto/hmac.hpp>
 #include <silkworm/sentry/rlpx/crypto/sha256.hpp>
 
+#include "ecies_cipher_error.hpp"
+
 namespace silkworm::sentry::rlpx::auth {
 
-static const std::size_t kKeySize = 16;
-static const std::size_t kMacSize = 32;
+static constexpr size_t kKeySize = 16;
+static constexpr size_t kMacSize = 32;
 
 static Bytes kdf(ByteView secret);
 using namespace crypto;
 
 Bytes EciesCipher::compute_shared_secret(PublicKeyView public_key_view, PrivateKeyView private_key) {
     secp256k1_pubkey public_key;
-    assert(public_key_view.size() == sizeof(public_key.data));
+    SILKWORM_ASSERT(public_key_view.size() == sizeof(public_key.data));
     memcpy(public_key.data, public_key_view.data().data(), sizeof(public_key.data));
 
     Bytes shared_secret(kKeySize * 2, 0);
     SecP256K1Context ctx;
     bool ok = ctx.compute_ecdh_secret(shared_secret, &public_key, private_key);
     if (!ok) {
-        throw std::runtime_error("EciesCipher::compute_shared_secret failed to ECDH-agree public and private key");
+        throw EciesCipherError(EciesCipherErrorCode::kSharedSecretFailure, "EciesCipher::compute_shared_secret failed to ECDH-agree public and private key");
     }
 
     return shared_secret;
@@ -54,7 +56,7 @@ EciesCipher::Message EciesCipher::encrypt_message(
     ByteView plain_text,
     PublicKeyView public_key_view,
     ByteView mac_extra_data) {
-    common::EccKeyPair ephemeral_key_pair;
+    EccKeyPair ephemeral_key_pair;
 
     Bytes shared_secret = kdf(compute_shared_secret(public_key_view, ephemeral_key_pair.private_key()));
     ByteView aes_key(shared_secret.data(), kKeySize);
@@ -83,7 +85,7 @@ Bytes EciesCipher::decrypt_message(
 
     Bytes mac = hmac(sha256(mac_key), message.iv, message.cipher_text, mac_extra_data);
     if (mac != message.mac) {
-        throw std::runtime_error("EciesCipher::decrypt_message: invalid MAC");
+        throw EciesCipherError(EciesCipherErrorCode::kInvalidMAC, "EciesCipher::decrypt_message: invalid MAC");
     }
 
     return aes_decrypt(message.cipher_text, aes_key, message.iv);
@@ -100,7 +102,7 @@ size_t EciesCipher::estimate_encrypted_size(size_t size) {
 // NIST SP 800-56 Concatenation Key Derivation Function (see section 5.8.1).
 // Since sha256 produces the right size, one iteration is enough.
 static Bytes kdf(ByteView secret) {
-    assert(secret.size() == kKeySize * 2);
+    SILKWORM_ASSERT(secret.size() == kKeySize * 2);
     Bytes data(sizeof(uint32_t), 0);
     endian::store_big_u32(data.data(), 1);
     data += secret;
@@ -109,7 +111,7 @@ static Bytes kdf(ByteView secret) {
 
 Bytes EciesCipher::serialize_message(const Message& message) {
     secp256k1_pubkey public_key;
-    assert(message.ephemeral_public_key.size() == sizeof(public_key.data));
+    SILKWORM_ASSERT(message.ephemeral_public_key.size() == sizeof(public_key.data));
     memcpy(public_key.data, message.ephemeral_public_key.data().data(), sizeof(public_key.data));
 
     SecP256K1Context ctx;
@@ -129,22 +131,22 @@ Bytes EciesCipher::serialize_message(const Message& message) {
 }
 
 EciesCipher::Message EciesCipher::deserialize_message(ByteView message_data) {
-    const std::size_t key_size = SecP256K1Context::kPublicKeySizeUncompressed;
-    const std::size_t iv_size = kAESBlockSize;
-    const std::size_t mac_size = kMacSize;
+    const size_t key_size = SecP256K1Context::kPublicKeySizeUncompressed;
+    const size_t iv_size = kAESBlockSize;
+    const size_t mac_size = kMacSize;
 
-    const std::size_t min_size = key_size + iv_size + mac_size;
+    const size_t min_size = key_size + iv_size + mac_size;
     if (message_data.size() < min_size) {
-        throw std::runtime_error("EciesCipher::deserialize_message: message data is too short");
+        throw EciesCipherError(EciesCipherErrorCode::kDataSizeTooShort, "EciesCipher::deserialize_message: message data is too short");
     }
-    const std::size_t cipher_text_size = message_data.size() - min_size;
+    const size_t cipher_text_size = message_data.size() - min_size;
 
     Bytes key_data{&message_data[0], key_size};
     Bytes iv{&message_data[key_size], iv_size};
     Bytes cipher_text{&message_data[key_size + iv_size], cipher_text_size};
     Bytes mac{&message_data[key_size + iv_size + cipher_text_size], mac_size};
 
-    auto ephemeral_public_key = common::EccPublicKey::deserialize_std(key_data);
+    auto ephemeral_public_key = EccPublicKey::deserialize_std(key_data);
 
     return {
         std::move(ephemeral_public_key),

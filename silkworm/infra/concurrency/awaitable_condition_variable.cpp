@@ -28,14 +28,14 @@ namespace silkworm::concurrency {
 
 class AwaitableConditionVariableImpl {
   public:
-    std::function<boost::asio::awaitable<void>()> waiter() {
-        size_t waiter_version;
+    std::function<Task<void>()> waiter() {
+        size_t waiter_version{0};
         {
             std::scoped_lock lock(mutex_);
             waiter_version = version_;
         }
 
-        return [this, waiter_version]() -> boost::asio::awaitable<void> {
+        return [this, waiter_version]() -> Task<void> {
             auto executor = co_await boost::asio::this_coro::executor;
 
             decltype(waiters_)::iterator waiter;
@@ -62,7 +62,7 @@ class AwaitableConditionVariableImpl {
 
     void notify_all() {
         std::scoped_lock lock(mutex_);
-        version_++;
+        ++version_;
         for (auto& waiter : waiters_) {
             waiter->notify();
         }
@@ -78,10 +78,10 @@ AwaitableConditionVariable::AwaitableConditionVariable() : p_impl_(std::make_uni
 }
 
 AwaitableConditionVariable::~AwaitableConditionVariable() {
-    [[maybe_unused]] int non_trivial_destructor;  // silent clang-tidy
+    [[maybe_unused]] int non_trivial_destructor{0};  // silent clang-tidy
 }
 
-std::function<boost::asio::awaitable<void>()> AwaitableConditionVariable::waiter() {
+std::function<Task<void>()> AwaitableConditionVariable::waiter() {
     return p_impl_->waiter();
 }
 

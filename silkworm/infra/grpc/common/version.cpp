@@ -41,16 +41,16 @@ ProtocolVersionResult wait_for_protocol_check(const std::unique_ptr<StubInterfac
     vv_stream << "client=" << version << " server=" << server_version;
     if (version.major != server_version.major) {  // NOLINT(bugprone-branch-clone)
         return ProtocolVersionResult{false, name + " incompatible interface: " + vv_stream.str()};
-    } else if (version.minor != server_version.minor) {
-        return ProtocolVersionResult{false, name + " incompatible interface: " + vv_stream.str()};
-    } else {
-        return ProtocolVersionResult{true, name + " compatible interface: " + vv_stream.str()};
     }
+    if (version.minor != server_version.minor) {
+        return ProtocolVersionResult{false, name + " incompatible interface: " + vv_stream.str()};
+    }
+    return ProtocolVersionResult{true, name + " compatible interface: " + vv_stream.str()};
 }
 
 template <auto Func, typename StubInterface>
 struct NewStubFactory final {
-    auto operator()(const std::shared_ptr<grpc::ChannelInterface>& channel, const grpc::StubOptions& options = grpc::StubOptions()) -> std::unique_ptr<StubInterface> {
+    std::unique_ptr<StubInterface> operator()(const std::shared_ptr<grpc::ChannelInterface>& channel, const grpc::StubOptions& options = grpc::StubOptions()) {
         return std::invoke(Func, channel, options);
     }
 };

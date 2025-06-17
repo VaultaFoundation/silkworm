@@ -16,9 +16,9 @@
 
 #include "decode.hpp"
 
-#include <cassert>
 #include <tuple>
 
+#include <silkworm/core/common/assert.hpp>
 #include <silkworm/core/common/endian.hpp>
 
 namespace silkworm::rlp {
@@ -85,10 +85,6 @@ tl::expected<Header, DecodingError> decode_header(ByteView& from) noexcept {
     }
 
     return h;
-}
-
-DecodingResult decode(ByteView& from, evmc::bytes32& to, Leftover mode) noexcept {
-    return decode(from, to.bytes, mode);
 }
 
 DecodingResult decode(ByteView& from, Bytes& to, Leftover mode) noexcept {

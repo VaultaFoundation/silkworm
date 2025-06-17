@@ -16,7 +16,7 @@
 
 #pragma once
 
-#include <silkworm/node/db/access_layer.hpp>
+#include <silkworm/db/access_layer.hpp>
 
 #include "types.hpp"
 
@@ -27,12 +27,12 @@ namespace silkworm {
  */
 class HeaderRetrieval {
   public:
-    static const long soft_response_limit = 2 * 1024 * 1024;  // Target maximum size of returned blocks
-    static const long est_header_rlp_size = 500;              // Approximate size of an RLP encoded block header
-    static const long max_headers_serve = 1024;               // Amount of block headers to be fetched per retrieval request
+    static const int kSoftResponseLimit = 2 * 1024 * 1024;  // Target maximum size of returned blocks
+    static const int kEstHeaderRlpSize = 500;               // Approximate size of an RLP encoded block header
+    static const int kMaxHeadersServe = 1024;               // Amount of block headers to be fetched per retrieval request
 
-    explicit HeaderRetrieval(db::ROAccess);
-    void close();
+    explicit HeaderRetrieval(db::DataModel data_model)
+        : data_model_{data_model} {}
 
     // Headers
     std::vector<BlockHeader> recover_by_hash(Hash origin, uint64_t amount, uint64_t skip, bool reverse);
@@ -43,7 +43,6 @@ class HeaderRetrieval {
                                             uint64_t& max_non_canonical);
 
   protected:
-    db::ROTxn db_tx_;
     db::DataModel data_model_;
 };
 

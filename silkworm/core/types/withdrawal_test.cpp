@@ -16,12 +16,15 @@
 
 #include "withdrawal.hpp"
 
-#include <catch2/catch.hpp>
+#include <catch2/catch_test_macros.hpp>
 
 #include <silkworm/core/common/util.hpp>
 #include <silkworm/core/trie/vector_root.hpp>
+#include <silkworm/core/types/evmc_bytes32.hpp>
 
 namespace silkworm {
+
+using namespace evmc::literals;
 
 TEST_CASE("Withdrawals hash") {
     std::vector<Withdrawal> withdrawals{

@@ -37,18 +37,31 @@ enum class Level {
 
 //! \brief Holds logging configuration
 struct Settings {
-    bool log_std_out{false};            // Whether console logging goes to std::cout or std::cerr (default)
-    bool log_utc{false};                // Whether timestamps should be in UTC or imbue local timezone
-    bool log_nocolor{false};            // Whether to disable colorized output
-    bool log_threads{false};            // Whether to print thread ids in log lines
-    Level log_verbosity{Level::kInfo};  // Log verbosity level
-    std::string log_file;               // Log to file
-    char log_thousands_sep{'\''};       // Thousands separator
+    //! Whether console logging goes to std::cout or std::cerr (default)
+    bool log_std_out{false};
+    //! Whether timestamps should be in UTC or imbue local timezone
+    bool log_utc{true};
+    //! Whether timestamps should include the timezone identifier
+    bool log_timezone{true};
+    //! Whether to disable colorized output
+    bool log_nocolor{false};
+    //! Whether to trim log level
+    bool log_trim{false};
+    //! Whether to print thread ids in log lines
+    bool log_threads{false};
+    //! Log verbosity level
+    Level log_verbosity{Level::kNone};
+    //! Log to file
+    std::string log_file;
+    //! Thousands separator
+    char log_thousands_sep{'\''};
+    //! Include GRPC library internal logs
+    bool log_grpc{true};
 };
 
 //! \brief Initializes logging facilities
 //! \note This function is not thread safe as it's meant to be used at start of process and never called again
-void init(Settings& settings);
+void init(const Settings& settings = {});
 
 //! \brief Get the current logging verbosity
 //! \note This function is not thread safe as it's meant to be used in tests
@@ -86,7 +99,7 @@ class BufferBase {
 
     // Accumulators
     template <class T>
-    inline void append(const T& t) {
+    void append(const T& t) {
         if (should_print_) ss_ << t;
     }
     template <class T>
@@ -94,21 +107,21 @@ class BufferBase {
         append(t);
         return *this;
     }
-    inline void append(const Args& args) {
+    void append(const Args& args) {
         append("", args);
     }
-    inline BufferBase& operator<<(const Args& args) {
+    BufferBase& operator<<(const Args& args) {
         append(args);
         return *this;
     }
 
   protected:
-    inline void append(std::string_view msg, const Args& args) {
+    void append(std::string_view msg, const Args& args) {
         if (!should_print_) return;
-        ss_ << std::left << std::setw(35) << std::setfill(' ') << msg;
+        ss_ << std::left << std::setw(41) << std::setfill(' ') << msg;
         bool left{true};
         for (const auto& arg : args) {
-            ss_ << (left ? kColorGreen : kColorWhiteHigh) << arg << kColorReset << (left ? "=" : " ") << kColorReset;
+            ss_ << (left ? kColorGreen : kColorWhite) << arg << kColorReset << (left ? "=" : " ") << kColorReset;
             left = !left;
         }
     }
@@ -121,7 +134,7 @@ template <Level level>
 class LogBuffer : public BufferBase {
   public:
     explicit LogBuffer() : BufferBase(level) {}
-    explicit LogBuffer(std::string_view msg, Args args = {}) : BufferBase(level, msg, args) {}
+    explicit LogBuffer(std::string_view msg, const Args& args = {}) : BufferBase(level, msg, args) {}
 };
 
 using Trace = LogBuffer<Level::kTrace>;
@@ -134,15 +147,23 @@ using Message = LogBuffer<Level::kNone>;
 
 }  // namespace silkworm::log
 
-#define SILK_LOGBUFFER(level_)                    \
+#define SILK_LOGBUFFER(level_, ...)               \
     if (!silkworm::log::test_verbosity(level_)) { \
     } else                                        \
-        silkworm::log::LogBuffer<level_>()
+        silkworm::log::LogBuffer<level_>(__VA_ARGS__)
 
-#define SILK_TRACE SILK_LOGBUFFER(silkworm::log::Level::kTrace)
-#define SILK_DEBUG SILK_LOGBUFFER(silkworm::log::Level::kDebug)
-#define SILK_INFO SILK_LOGBUFFER(silkworm::log::Level::kInfo)
-#define SILK_WARN SILK_LOGBUFFER(silkworm::log::Level::kWarning)
-#define SILK_ERROR SILK_LOGBUFFER(silkworm::log::Level::kError)
-#define SILK_CRIT SILK_LOGBUFFER(silkworm::log::Level::kCritical)
-#define SILK_LOG SILK_LOGBUFFER(silkworm::log::Level::kNone)
+#define SILK_TRACE_M(...) SILK_LOGBUFFER(silkworm::log::Level::kTrace, __VA_ARGS__)
+#define SILK_DEBUG_M(...) SILK_LOGBUFFER(silkworm::log::Level::kDebug, __VA_ARGS__)
+#define SILK_INFO_M(...) SILK_LOGBUFFER(silkworm::log::Level::kInfo, __VA_ARGS__)
+#define SILK_WARN_M(...) SILK_LOGBUFFER(silkworm::log::Level::kWarning, __VA_ARGS__)
+#define SILK_ERROR_M(...) SILK_LOGBUFFER(silkworm::log::Level::kError, __VA_ARGS__)
+#define SILK_CRIT_M(...) SILK_LOGBUFFER(silkworm::log::Level::kCritical, __VA_ARGS__)
+#define SILK_LOG_M(...) SILK_LOGBUFFER(silkworm::log::Level::kNone, __VA_ARGS__)
+
+#define SILK_TRACE SILK_TRACE_M()
+#define SILK_DEBUG SILK_DEBUG_M()
+#define SILK_INFO SILK_INFO_M()
+#define SILK_WARN SILK_WARN_M()
+#define SILK_ERROR SILK_ERROR_M()
+#define SILK_CRIT SILK_CRIT_M()
+#define SILK_LOG SILK_LOG_M()

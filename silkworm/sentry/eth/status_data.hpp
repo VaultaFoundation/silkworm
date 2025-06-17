@@ -25,9 +25,9 @@
 namespace silkworm::sentry::eth {
 
 struct StatusData {
-    std::vector<BlockNum> fork_block_numbers;
+    std::vector<BlockNum> fork_block_nums;
     std::vector<BlockTime> fork_block_times;
-    BlockNum head_block_num;
+    BlockNum head_block_num{0};
     StatusMessage message;
 };
 

@@ -14,69 +14,54 @@
    limitations under the License.
 ]]
 
-find_package(Catch2 REQUIRED)
 find_package(magic_enum REQUIRED)
 
-# Silkworm Core Tests
-file(GLOB_RECURSE SILKWORM_CORE_TESTS CONFIGURE_DEPENDS "${SILKWORM_MAIN_SRC_DIR}/core/*_test.cpp")
-add_executable(core_test unit_test.cpp ${SILKWORM_CORE_TESTS})
-
-target_link_libraries(core_test silkworm_core Catch2::Catch2)
-
-if(MSVC)
-  target_compile_options(core_test PRIVATE /EHa- /EHsc)
-else()
-  target_compile_options(core_test PRIVATE -fno-exceptions)
-endif()
-
 if(NOT SILKWORM_CORE_ONLY)
-  find_package(GTest REQUIRED)
 
-  # Silkworm Infra Tests
-  file(GLOB_RECURSE SILKWORM_INFRA_TESTS CONFIGURE_DEPENDS "${SILKWORM_MAIN_SRC_DIR}/infra/*_test.cpp")
-  add_executable(infra_test "unit_test.cpp;${SILKWORM_INFRA_TESTS}")
-  if(SILKWORM_SANITIZE)
-    target_compile_definitions(infra_test PRIVATE GRPC_ASAN_SUPPRESSED GRPC_TSAN_SUPPRESSED)
-  endif()
-  target_link_libraries(infra_test silkworm_infra Catch2::Catch2 GTest::gmock)
+  # Enable fuzzing tests for Clang builds only
+  if("${CMAKE_CXX_COMPILER_ID}" MATCHES ".*Clang$" AND SILKWORM_FUZZER)
 
-  # Silkworm Node Tests
-  file(GLOB_RECURSE SILKWORM_NODE_TESTS CONFIGURE_DEPENDS "${SILKWORM_MAIN_SRC_DIR}/node/*_test.cpp")
-  add_executable(node_test unit_test.cpp ${SILKWORM_NODE_TESTS})
-  if(SILKWORM_SANITIZE)
-    target_compile_definitions(node_test PRIVATE GRPC_ASAN_SUPPRESSED GRPC_TSAN_SUPPRESSED)
-  endif()
-  target_link_libraries(node_test silkworm_node Catch2::Catch2)
+    # Silkworm RpcDaemon Fuzzer Tests
+    add_executable(rpcdaemon_fuzzer_test fuzzer_test.cpp)
+    target_link_libraries(
+      rpcdaemon_fuzzer_test PRIVATE silkworm_rpcdaemon silkworm_infra_test_util silkworm_rpcdaemon_test_util
+    )
 
-  # Silkworm RpcDaemon Tests
-  file(GLOB_RECURSE SILKWORM_RPCDAEMON_TESTS CONFIGURE_DEPENDS "${SILKWORM_MAIN_SRC_DIR}/silkrpc/*_test.cpp")
-  add_executable(rpcdaemon_test unit_test.cpp ${SILKWORM_RPCDAEMON_TESTS})
-  if(SILKWORM_SANITIZE)
-    target_compile_definitions(rpcdaemon_test PRIVATE GRPC_ASAN_SUPPRESSED GRPC_TSAN_SUPPRESSED)
-  endif()
-  target_include_directories(
-    rpcdaemon_test PRIVATE ${SILKWORM_MAIN_DIR} ${SILKWORM_MAIN_DIR}/third_party/evmone/evmc/include
-  )
-  target_link_libraries(rpcdaemon_test silkrpc Catch2::Catch2 GTest::gmock)
+    target_compile_options(rpcdaemon_fuzzer_test PRIVATE -fsanitize=fuzzer)
+    if(SILKWORM_FUZZER_LIBFUZZER_PATH)
+      target_link_libraries(rpcdaemon_fuzzer_test PRIVATE ${SILKWORM_FUZZER_LIBFUZZER_PATH})
+    else()
+      target_link_libraries(rpcdaemon_fuzzer_test PRIVATE -fsanitize=fuzzer)
+    endif()
 
-  # Silkworm Sync Tests
-  file(GLOB_RECURSE SILKWORM_SYNC_TESTS CONFIGURE_DEPENDS "${SILKWORM_MAIN_SRC_DIR}/sync/*_test.cpp")
-  add_executable(sync_test unit_test.cpp ${SILKWORM_SYNC_TESTS})
-  if(SILKWORM_SANITIZE)
-    target_compile_definitions(sync_test PRIVATE GRPC_ASAN_SUPPRESSED GRPC_TSAN_SUPPRESSED)
+    # Silkworm RpcDaemon Fuzzer Diagnostic
+    add_executable(rpcdaemon_fuzzer_diagnostics fuzzer_diagnostics.cpp)
+    target_link_libraries(
+      rpcdaemon_fuzzer_diagnostics PRIVATE silkworm_rpcdaemon silkworm_infra_test_util silkworm_rpcdaemon_test_util
+                                           CLI11::CLI11
+    )
+
+    if(SILKWORM_FUZZER_SANITIZERS)
+      target_compile_options(rpcdaemon_fuzzer_test PRIVATE -fsanitize=${SILKWORM_FUZZER_SANITIZERS})
+      target_compile_options(rpcdaemon_fuzzer_diagnostics PRIVATE -fsanitize=${SILKWORM_FUZZER_SANITIZERS})
+      target_link_libraries(rpcdaemon_fuzzer_test PRIVATE -fsanitize=${SILKWORM_FUZZER_SANITIZERS})
+      target_link_libraries(rpcdaemon_fuzzer_diagnostics PRIVATE -fsanitize=${SILKWORM_FUZZER_SANITIZERS})
+    endif()
+
   endif()
-  target_link_libraries(sync_test silkworm_node silkworm_sync Catch2::Catch2)
 
   # Ethereum EL Tests (https://github.com/ethereum/tests)
   find_package(CLI11 REQUIRED)
   add_executable(ethereum ethereum.cpp)
-  target_compile_definitions(ethereum PRIVATE SILKWORM_ETHEREUM_TESTS_DIR="${SILKWORM_MAIN_DIR}/third_party/tests")
+  target_compile_definitions(
+    ethereum PRIVATE SILKWORM_ETHEREUM_TESTS_DIR="${SILKWORM_MAIN_DIR}/third_party/ethereum-tests"
+  )
   target_link_libraries(ethereum PRIVATE silkworm_infra evmc::loader CLI11::CLI11 magic_enum::magic_enum)
 
   # BE&KV Tests
-  add_executable(backend_kv_test "backend_kv_test.cpp" "../common/shutdown_signal.hpp" "../common/shutdown_signal.cpp")
-  target_link_libraries(backend_kv_test PRIVATE silkworm_node CLI11::CLI11 magic_enum::magic_enum)
+  add_executable(backend_kv_test backend_kv_test.cpp)
+  target_link_libraries(backend_kv_test PRIVATE silkworm_infra_cli silkworm_node CLI11::CLI11 magic_enum::magic_enum)
 
-  add_executable(sentry_client_test "sentry_client_test.cpp")
+  add_executable(sentry_client_test sentry_client_test.cpp)
   target_link_libraries(sentry_client_test PRIVATE silkworm_sentry)
 endif()

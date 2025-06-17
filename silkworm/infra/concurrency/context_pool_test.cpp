@@ -20,26 +20,30 @@
 #include <stdexcept>
 #include <thread>
 
-#include <boost/asio/executor_work_guard.hpp>
-#include <catch2/catch.hpp>
+#include <silkworm/infra/concurrency/task.hpp>
 
+#include <boost/asio/executor_work_guard.hpp>
+#include <catch2/catch_test_macros.hpp>
+
+#include <silkworm/core/test_util/null_stream.hpp>
 #include <silkworm/infra/common/log.hpp>
-#include <silkworm/infra/test/log.hpp>
+#include <silkworm/infra/concurrency/sleep.hpp>
+#include <silkworm/infra/concurrency/spawn.hpp>
+#include <silkworm/infra/test_util/log.hpp>
 
 namespace silkworm::concurrency {
 
 // Exclude gRPC tests from sanitizer builds due to data race warnings inside gRPC library
 #ifndef SILKWORM_SANITIZE
 TEST_CASE("Context", "[silkworm][concurrency][server_context]") {
-    test::SetLogVerbosityGuard guard{log::Level::kNone};
     Context ctx{0};
 
     SECTION("ServerContext") {
-        CHECK(ctx.io_context() != nullptr);
+        CHECK(ctx.ioc() != nullptr);
     }
 
     SECTION("execute_loop") {
-        boost::asio::executor_work_guard work = boost::asio::make_work_guard(*ctx.io_context());
+        boost::asio::executor_work_guard work = boost::asio::make_work_guard(*ctx.ioc());
         std::atomic_bool context_thread_failed{false};
         std::thread context_thread{[&]() {
             try {
@@ -54,84 +58,55 @@ TEST_CASE("Context", "[silkworm][concurrency][server_context]") {
     }
 
     SECTION("stop") {
-        boost::asio::executor_work_guard work = boost::asio::make_work_guard(*ctx.io_context());
+        boost::asio::executor_work_guard work = boost::asio::make_work_guard(*ctx.ioc());
         std::thread context_thread{[&]() { ctx.execute_loop(); }};
-        CHECK(!ctx.io_context()->stopped());
+        CHECK(!ctx.ioc()->stopped());
         ctx.stop();
-        CHECK(ctx.io_context()->stopped());
+        CHECK(ctx.ioc()->stopped());
         context_thread.join();
         ctx.stop();
-        CHECK(ctx.io_context()->stopped());
+        CHECK(ctx.ioc()->stopped());
     }
 
     SECTION("print") {
-        CHECK_NOTHROW(test::null_stream() << ctx);
+        CHECK_NOTHROW(test_util::null_stream() << ctx);
     }
 }
 
 TEST_CASE("ContextPool", "[silkworm][concurrency][Context]") {
-    test::SetLogVerbosityGuard guard{log::Level::kNone};
-
     SECTION("ContextPool OK") {
         ContextPool context_pool{2};
-        CHECK(context_pool.num_contexts() == 0);
+        CHECK(context_pool.size() == 2);
     }
 
     SECTION("ContextPool KO") {
         CHECK_THROWS_AS(ContextPool{0}, std::logic_error);
     }
 
-    SECTION("add_context") {
-        ContextPool context_pool{2};
-        REQUIRE(context_pool.num_contexts() == 0);
-        context_pool.add_context(Context{0, WaitMode::blocking});
-        context_pool.add_context(Context{1, WaitMode::blocking});
-        CHECK(context_pool.num_contexts() == 2);
-    }
-
     SECTION("next_context") {
         ContextPool context_pool{2};
-        REQUIRE(context_pool.num_contexts() == 0);
-        context_pool.add_context(Context{0, WaitMode::blocking});
-        context_pool.add_context(Context{1, WaitMode::blocking});
-        CHECK(context_pool.num_contexts() == 2);
         auto& context1 = context_pool.next_context();
-        CHECK(context1.io_context() != nullptr);
+        CHECK(context1.ioc() != nullptr);
         auto& context2 = context_pool.next_context();
-        CHECK(context2.io_context() != nullptr);
+        CHECK(context2.ioc() != nullptr);
     }
 
-    SECTION("next_io_context") {
+    SECTION("next_ioc") {
         ContextPool context_pool{2};
-        REQUIRE(context_pool.num_contexts() == 0);
-        context_pool.add_context(Context{0, WaitMode::blocking});
-        context_pool.add_context(Context{1, WaitMode::blocking});
-        CHECK(context_pool.num_contexts() == 2);
         auto& context1 = context_pool.next_context();
         auto& context2 = context_pool.next_context();
-        CHECK(&context_pool.next_io_context() == context1.io_context());
-        CHECK(&context_pool.next_io_context() == context2.io_context());
-    }
-
-    SECTION("start/stop w/o contexts") {
-        ContextPool context_pool{2};
-        REQUIRE(context_pool.num_contexts() == 0);
-        CHECK_NOTHROW(context_pool.start());
-        CHECK_NOTHROW(context_pool.stop());
+        CHECK(&context_pool.next_ioc() == context1.ioc());
+        CHECK(&context_pool.next_ioc() == context2.ioc());
     }
 
     SECTION("start/stop w/ contexts") {
         ContextPool context_pool{2};
-        context_pool.add_context(Context{0, WaitMode::blocking});
-        context_pool.add_context(Context{1, WaitMode::blocking});
         CHECK_NOTHROW(context_pool.start());
         CHECK_NOTHROW(context_pool.stop());
     }
 
     SECTION("join") {
         ContextPool context_pool{2};
-        context_pool.add_context(Context{0, WaitMode::blocking});
-        context_pool.add_context(Context{1, WaitMode::blocking});
         context_pool.start();
         std::thread joining_thread{[&]() { context_pool.join(); }};
         context_pool.stop();
@@ -140,11 +115,33 @@ TEST_CASE("ContextPool", "[silkworm][concurrency][Context]") {
 
     SECTION("join after stop") {
         ContextPool context_pool{2};
-        context_pool.add_context(Context{0, WaitMode::blocking});
-        context_pool.add_context(Context{1, WaitMode::blocking});
         context_pool.start();
         context_pool.stop();
         CHECK_NOTHROW(context_pool.join());
+    }
+
+    SECTION("start/stop/join w/ task enqueued") {
+        ContextPool context_pool{2};
+        concurrency::spawn_future(context_pool.any_executor(), [&]() -> Task<void> {
+            co_await sleep(std::chrono::milliseconds(1'000));
+        });
+        context_pool.start();
+        context_pool.stop();
+        CHECK_NOTHROW(context_pool.join());
+    }
+
+    SECTION("start/destroy w/ task enqueued") {
+        ContextPool context_pool{2};
+        concurrency::spawn_future(context_pool.any_executor(), [&]() -> Task<void> {
+            co_await sleep(std::chrono::milliseconds(1'000));
+        });
+        context_pool.start();
+    }
+
+    SECTION("stop/start w/ contexts") {
+        ContextPool context_pool{2};
+        CHECK_NOTHROW(context_pool.stop());
+        CHECK_NOTHROW(context_pool.start());
     }
 }
 #endif  // SILKWORM_SANITIZE

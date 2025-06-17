@@ -17,6 +17,7 @@
 #pragma once
 
 #include <silkworm/core/common/base.hpp>
+#include <silkworm/core/common/bytes.hpp>
 #include <silkworm/sentry/common/ecc_key_pair.hpp>
 #include <silkworm/sentry/common/ecc_public_key.hpp>
 
@@ -25,36 +26,36 @@ namespace silkworm::sentry::rlpx::auth {
 class AuthMessage {
   public:
     AuthMessage(
-        const common::EccKeyPair& initiator_key_pair,
-        common::EccPublicKey recipient_public_key,
-        const common::EccKeyPair& ephemeral_key_pair);
-    AuthMessage(ByteView data, const common::EccKeyPair& recipient_key_pair);
+        const EccKeyPair& initiator_key_pair,
+        EccPublicKey recipient_public_key,
+        const EccKeyPair& ephemeral_key_pair);
+    AuthMessage(ByteView data, const EccKeyPair& recipient_key_pair);
 
-    [[nodiscard]] Bytes serialize() const;
+    Bytes serialize() const;
 
-    [[nodiscard]] const common::EccPublicKey& initiator_public_key() const {
+    const EccPublicKey& initiator_public_key() const {
         return initiator_public_key_;
     }
 
-    [[nodiscard]] const common::EccPublicKey& ephemeral_public_key() const {
+    const EccPublicKey& ephemeral_public_key() const {
         return ephemeral_public_key_;
     }
 
-    [[nodiscard]] ByteView nonce() const { return nonce_; }
+    ByteView nonce() const { return nonce_; }
 
   private:
-    [[nodiscard]] Bytes body_as_rlp() const;
+    Bytes body_as_rlp() const;
     void init_from_rlp(ByteView data);
 
     static Bytes serialize_size(size_t body_size);
     static Bytes decrypt_body(ByteView data, ByteView recipient_private_key);
 
-    common::EccPublicKey initiator_public_key_;
-    common::EccPublicKey recipient_public_key_;
-    common::EccPublicKey ephemeral_public_key_;
+    EccPublicKey initiator_public_key_;
+    EccPublicKey recipient_public_key_;
+    EccPublicKey ephemeral_public_key_;
     Bytes nonce_;
     Bytes signature_;
-    static const uint8_t version;
+    static constexpr uint8_t kVersion{4};
 };
 
 }  // namespace silkworm::sentry::rlpx::auth

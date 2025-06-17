@@ -5,10 +5,11 @@
 #include <string>
 
 #include <intx/intx.hpp>
-
+#include <evmc/evmc.hpp>
 
 #if not defined(ANTELOPE)
 #include <silkworm/core/common/base.hpp>
+#include <silkworm/core/common/bytes.hpp>
 #endif
 
 
@@ -36,7 +37,7 @@ struct GasFeeParameters {
     static std::optional<GasFeeParameters> decode(silkworm::ByteView encoded) noexcept;
     #endif
 
-    friend bool operator==(const GasFeeParameters&, const GasFeeParameters&);  
+    friend bool operator==(const GasFeeParameters&, const GasFeeParameters&) = default;
 };
 
 struct ConsensusParameters {
@@ -51,7 +52,7 @@ struct ConsensusParameters {
     evmc::bytes32 hash() const noexcept;
     #endif
 
-    friend bool operator==(const ConsensusParameters&, const ConsensusParameters&);
+    friend bool operator==(const ConsensusParameters&, const ConsensusParameters&) = default;
 };
 
 } // namespace eosevm

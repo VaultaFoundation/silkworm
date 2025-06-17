@@ -25,17 +25,22 @@
 
 #include <evmc/evmc.h>
 
+#include <silkworm/core/chain/config.hpp>
 #include <silkworm/core/common/base.hpp>
+#include <silkworm/core/common/bytes.hpp>
+#include <silkworm/db/access_layer.hpp>
+#include <silkworm/db/datastore/etl/collector.hpp>
+#include <silkworm/db/datastore/etl/collector_settings.hpp>
+#include <silkworm/db/prune_mode.hpp>
+#include <silkworm/db/stage.hpp>
 #include <silkworm/infra/concurrency/thread_pool.hpp>
-#include <silkworm/node/etl/collector.hpp>
-#include <silkworm/node/stagedsync/stages/stage.hpp>
 
 namespace silkworm::stagedsync {
 
 //! \brief The information to compute the sender address from transaction signature
 struct AddressRecovery {
     BlockNum block_num{0};       // Number of block containing the transaction
-    Hash hash;                   // Hash of the block containing the transaction
+    Hash block_hash;             // Hash of the block containing the transaction
     bool odd_y_parity{false};    // Whether y parity is odd (https://eips.ethereum.org/EIPS/eip-155)
     uint8_t tx_signature[64]{};  // Signature of the transaction
     evmc::address tx_from;       // Recovered sender address
@@ -47,7 +52,13 @@ using AddressRecoveryBatch = std::vector<AddressRecovery>;
 
 class Senders final : public Stage {
   public:
-    explicit Senders(NodeSettings* node_settings, SyncContext* sync_context);
+    Senders(
+        SyncContext* sync_context,
+        db::DataModelFactory data_model_factory,
+        const ChainConfig& chain_config,
+        size_t batch_size,
+        datastore::etl::CollectorSettings etl_settings,
+        db::BlockAmount prune_mode_senders);
     ~Senders() override = default;
 
     Stage::Result forward(db::RWTxn& txn) final;
@@ -55,23 +66,26 @@ class Senders final : public Stage {
     Stage::Result prune(db::RWTxn& txn) final;
     std::vector<std::string> get_log_progress() final;
 
+    void set_prune_mode_senders(db::BlockAmount prune_mode_senders);
+
   private:
     Stage::Result parallel_recover(db::RWTxn& txn);
 
-    Stage::Result add_to_batch(const BlockHeader& header, BlockNum block_num, Hash block_hash, std::vector<Transaction>&& transactions);
-    void recover_batch(ThreadPool& worker_pool, secp256k1_context* context);
+    Stage::Result add_to_batch(BlockNum block_num, BlockTime block_timestamp, const Hash& block_hash, const std::vector<Transaction>& transactions);
+    void recover_batch(ThreadPool& worker_pool, const secp256k1_context* context);
     void collect_senders();
     void collect_senders(std::shared_ptr<AddressRecoveryBatch>& batch);
     void store_senders(db::RWTxn& txn);
 
     void increment_total_processed_blocks();
-    void increment_total_collected_transactions(std::size_t delta);
+    void increment_total_collected_transactions(size_t delta);
 
-    //! The canonical hashes of the current block range
-    // std::vector<evmc::bytes32> canonical_hashes_;
+    db::DataModelFactory data_model_factory_;
+    const ChainConfig& chain_config_;
+    db::BlockAmount prune_mode_senders_;
 
     //! The size of recovery batches
-    std::size_t max_batch_size_;
+    size_t max_batch_size_;
 
     //! The current recovery batch being created
     std::shared_ptr<AddressRecoveryBatch> batch_;
@@ -83,12 +97,13 @@ class Senders final : public Stage {
     uint64_t collected_senders_{0};
 
     //! ETL collector writing recovered senders in bulk
-    etl::Collector collector_;
+    datastore::etl::CollectorSettings etl_settings_;
+    std::unique_ptr<datastore::kvdb::Collector> collector_;
 
     // Stats
     std::mutex mutex_{};
-    std::size_t total_processed_blocks_{0};
-    std::size_t total_collected_transactions_{0};
+    size_t total_processed_blocks_{0};
+    size_t total_collected_transactions_{0};
     std::string current_key_{};
 };
 

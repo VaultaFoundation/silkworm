@@ -22,14 +22,12 @@
 #include <variant>
 #include <vector>
 
-#include <silkworm/core/common/as_range.hpp>
 #include <silkworm/core/common/lru_cache.hpp>
 #include <silkworm/core/types/block.hpp>
-#include <silkworm/infra/common/asio_timer.hpp>
-#include <silkworm/infra/common/stopwatch.hpp>
-#include <silkworm/node/db/access_layer.hpp>
+#include <silkworm/core/types/block_id.hpp>
+#include <silkworm/db/access_layer.hpp>
+#include <silkworm/db/stage.hpp>
 #include <silkworm/node/stagedsync/execution_pipeline.hpp>
-#include <silkworm/node/stagedsync/stages/stage.hpp>
 
 namespace silkworm::stagedsync {
 
@@ -37,34 +35,41 @@ class CanonicalChain {
   public:
     static constexpr size_t kNoCache = 0;
 
-    explicit CanonicalChain(db::RWTxn&, size_t cache_size = kDefaultCacheSize);
-    CanonicalChain(CanonicalChain&) = delete;           // tx is not copiable
+    explicit CanonicalChain(
+        db::RWTxn& tx,
+        db::DataModelFactory data_model_factory,
+        size_t cache_size = kDefaultCacheSize);
+    CanonicalChain(CanonicalChain&) = delete;           // tx is not copyable
     CanonicalChain(const CanonicalChain&, db::RWTxn&);  // we can copy a CanonicalChain giving a new tx
     CanonicalChain(CanonicalChain&&) noexcept;
+
+    void open();
 
     BlockId find_forking_point(Hash header_hash) const;
     BlockId find_forking_point(const BlockHeader& header, Hash header_hash) const;
 
-    void advance(BlockNum height, Hash header_hash);
-    void update_up_to(BlockNum height, Hash header_hash);
+    void advance(BlockNum block_num, Hash header_hash);
+    void update_up_to(BlockNum block_num, Hash hash);
     void delete_down_to(BlockNum unwind_point);
     void set_current_head(BlockId);
 
     BlockId initial_head() const;
     BlockId current_head() const;
 
-    auto get_hash(BlockNum height) const -> std::optional<Hash>;
-    auto has(Hash block_hash) const -> bool;
+    std::optional<Hash> get_hash(BlockNum block_num) const;
+    bool has(Hash block_hash) const;
 
   private:
+    db::DataModel data_model() const { return data_model_factory_(tx_); }
+
     db::RWTxn& tx_;
-    db::DataModel data_model_;
+    db::DataModelFactory data_model_factory_;
 
     BlockId initial_head_{};
     BlockId current_head_{};
 
     static constexpr size_t kDefaultCacheSize = 1000;
-    std::unique_ptr<lru_cache<BlockNum, Hash>> canonical_hash_cache_;  // uses unique_ptr because lru_cache is not movable
+    std::unique_ptr<LruCache<BlockNum, Hash>> canonical_hash_cache_;  // uses unique_ptr because LruCache is not movable
     bool cache_enabled() const;
 };
 

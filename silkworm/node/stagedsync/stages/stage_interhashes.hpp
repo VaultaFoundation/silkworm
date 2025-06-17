@@ -18,17 +18,25 @@
 
 #include <silkworm/core/trie/hash_builder.hpp>
 #include <silkworm/core/trie/prefix_set.hpp>
-#include <silkworm/node/etl/collector.hpp>
-#include <silkworm/node/stagedsync/stages/stage.hpp>
+#include <silkworm/db/access_layer.hpp>
+#include <silkworm/db/datastore/etl/collector.hpp>
+#include <silkworm/db/datastore/etl/collector_settings.hpp>
+#include <silkworm/db/stage.hpp>
 #include <silkworm/node/stagedsync/stages/stage_interhashes/trie_loader.hpp>
 
 namespace silkworm::stagedsync {
 
 class InterHashes final : public Stage {
   public:
-    explicit InterHashes(NodeSettings* node_settings, SyncContext* sync_context)
-        : Stage(sync_context, db::stages::kIntermediateHashesKey, node_settings){};
+    InterHashes(
+        SyncContext* sync_context,
+        db::DataModelFactory data_model_factory,
+        datastore::etl::CollectorSettings etl_settings)
+        : Stage(sync_context, db::stages::kIntermediateHashesKey),
+          data_model_factory_(std::move(data_model_factory)),
+          etl_settings_(std::move(etl_settings)) {}
     ~InterHashes() override = default;
+
     Stage::Result forward(db::RWTxn& txn) final;
     Stage::Result unwind(db::RWTxn& txn) final;
     Stage::Result prune(db::RWTxn& txn) final;
@@ -46,17 +54,21 @@ class InterHashes final : public Stage {
     trie::PrefixSet collect_storage_changes(db::RWTxn& txn, BlockNum from, BlockNum to,
                                             absl::btree_map<evmc::address, ethash_hash256>& hashed_addresses);
 
-    //! \brief Erigon's RegenerateIntermediateHashes
+    //! \brief Erigon RegenerateIntermediateHashes
     //! \remarks might throw WrongRoot
     //! \return the state root
-    [[nodiscard]] Stage::Result regenerate_intermediate_hashes(db::RWTxn& txn,
-                                                               const evmc::bytes32* expected_root = nullptr);
+    Stage::Result regenerate_intermediate_hashes(
+        db::RWTxn& txn,
+        const evmc::bytes32* expected_root = nullptr);
 
-    //! \brief Erigon's IncrementIntermediateHashes
+    //! \brief Erigon IncrementIntermediateHashes
     //! \remarks might throw
     //! \return the state root
-    [[nodiscard]] Stage::Result increment_intermediate_hashes(db::RWTxn& txn, BlockNum from, BlockNum to,
-                                                              const evmc::bytes32* expected_root = nullptr);
+    [[maybe_unused]] Stage::Result increment_intermediate_hashes(
+        db::RWTxn& txn,
+        BlockNum from,
+        BlockNum to,
+        const evmc::bytes32* expected_root = nullptr);
 
     //! \brief Persists in TrieAccount and TrieStorage the collected nodes (and respective deletions if any)
     void flush_collected_nodes(db::RWTxn& txn);
@@ -102,10 +114,16 @@ class InterHashes final : public Stage {
     amount of iterations will not be big.
     */
 
-    std::unique_ptr<trie::TrieLoader> trie_loader_;      // The loader which (re)builds the trees
-    std::unique_ptr<etl::Collector> account_collector_;  // To accumulate new records for kTrieOfAccounts
-    std::unique_ptr<etl::Collector> storage_collector_;  // To accumulate new records for kTrieOfStorage
-    std::unique_ptr<etl::Collector> loading_collector_;  // Effectively the current collector undergoing load (for log)
+    // The loader which (re)builds the trees
+    std::unique_ptr<trie::TrieLoader> trie_loader_;
+
+    db::DataModelFactory data_model_factory_;
+
+    datastore::etl::CollectorSettings etl_settings_;
+
+    std::unique_ptr<datastore::kvdb::Collector> account_collector_;  // To accumulate new records for kTrieOfAccounts
+    std::unique_ptr<datastore::kvdb::Collector> storage_collector_;  // To accumulate new records for kTrieOfStorage
+    std::unique_ptr<datastore::kvdb::Collector> loading_collector_;  // Effectively the current collector undergoing load (for log)
 
     // Logger info
     std::mutex log_mtx_{};                 // Guards async logging

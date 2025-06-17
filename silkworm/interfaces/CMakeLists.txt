@@ -16,6 +16,7 @@
 
 include(generate_grpc.cmake)
 
+find_package(absl REQUIRED)
 find_package(gRPC REQUIRED)
 find_package(Protobuf REQUIRED)
 
@@ -27,6 +28,7 @@ list(APPEND SILKWORM_INTERFACE_SRC "${EXECUTION_SOURCES_SYMLINK}")
 list(APPEND SILKWORM_INTERFACE_SRC "${SENTRY_SOURCES_SYMLINK}")
 list(APPEND SILKWORM_INTERFACE_SRC "${KV_SOURCES_SYMLINK}")
 list(APPEND SILKWORM_INTERFACE_SRC "${ETHBACKEND_SOURCES_SYMLINK}")
+list(APPEND SILKWORM_INTERFACE_SRC "${BOR_SOURCES_SYMLINK}")
 list(APPEND SILKWORM_INTERFACE_SRC "${MINING_SOURCES_SYMLINK}")
 list(APPEND SILKWORM_INTERFACE_SRC "${TXPOOL_SOURCES_SYMLINK}")
 
@@ -43,24 +45,28 @@ add_dependencies(
 )
 # cmake-format: on
 
-if(NOT MSVC)
+# Disable warning in gRPC generated code on different compilers
+if(MSVC)
+  target_compile_options(silkworm_interfaces PRIVATE /wd4100) # C4100: unreferenced formal parameter
+else()
   target_compile_options(silkworm_interfaces PRIVATE -Wno-sign-conversion)
 
   check_cxx_compiler_flag("-Wno-deprecated-pragma" HAS_NO_DEPRECATED_PRAGMA)
   if(HAS_NO_DEPRECATED_PRAGMA)
     target_compile_options(silkworm_interfaces PRIVATE -Wno-deprecated-pragma)
   endif()
-endif(NOT MSVC)
-
-# Suppress ASAN/TSAN in gRPC to avoid ODR violation when building Silkworm with sanitizers See
-# https://github.com/grpc/grpc/issues/19224
-if(SILKWORM_SANITIZE)
-  target_compile_definitions(silkworm_interfaces PRIVATE GRPC_ASAN_SUPPRESSED GRPC_TSAN_SUPPRESSED)
 endif()
 
 target_include_directories(silkworm_interfaces PUBLIC "${SILKWORM_MAIN_DIR};${CMAKE_CURRENT_SOURCE_DIR}")
 
-set(LIBS_PUBLIC gRPC::grpc++ protobuf::libprotobuf)
+# cmake-format: off
+set(LIBS_PUBLIC
+    absl::log
+    absl::strings
+    gRPC::grpc++
+    protobuf::libprotobuf
+)
+# cmake-format: on
 set(LIBS_PRIVATE "")
 if(MSVC)
   list(APPEND LIBS_PRIVATE ntdll.lib)

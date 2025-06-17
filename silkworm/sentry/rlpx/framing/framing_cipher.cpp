@@ -20,13 +20,14 @@
 
 #include <silkworm/core/common/endian.hpp>
 #include <silkworm/core/rlp/encode_vector.hpp>
+#include <silkworm/sentry/common/crypto/xor.hpp>
 #include <silkworm/sentry/rlpx/crypto/aes.hpp>
 #include <silkworm/sentry/rlpx/crypto/sha3_hasher.hpp>
-#include <silkworm/sentry/rlpx/crypto/xor.hpp>
 
 namespace silkworm::sentry::rlpx::framing {
 
 using namespace crypto;
+using namespace silkworm::sentry::crypto;
 using KeyMaterial = FramingCipher::KeyMaterial;
 using MACHasher = crypto::Sha3Hasher;
 
@@ -34,9 +35,9 @@ class FramingCipherImpl {
   public:
     FramingCipherImpl(const KeyMaterial& key_material, Bytes aes_secret, Bytes mac_secret);
 
-    [[nodiscard]] Bytes encrypt_frame(Bytes frame_data);
-    [[nodiscard]] size_t decrypt_header(ByteView header_cipher_text, ByteView header_mac);
-    [[nodiscard]] Bytes decrypt_frame(ByteView frame_cipher_text, ByteView frame_mac, size_t frame_size);
+    Bytes encrypt_frame(Bytes frame_data);
+    size_t decrypt_header(ByteView header_cipher_text, ByteView header_mac);
+    Bytes decrypt_frame(ByteView frame_cipher_text, ByteView frame_mac, size_t frame_size);
 
   private:
     static void init_mac_hashers(
@@ -45,10 +46,10 @@ class FramingCipherImpl {
         MACHasher& egress_mac_hasher,
         MACHasher& ingress_mac_hasher);
 
-    [[nodiscard]] Bytes header_mac(MACHasher& hasher, ByteView header_cipher_text);
-    [[nodiscard]] Bytes frame_mac(MACHasher& hasher, ByteView frame_cipher_text);
-    [[nodiscard]] static Bytes serialize_frame_size(size_t size);
-    [[nodiscard]] static size_t deserialize_frame_size(ByteView data);
+    Bytes header_mac(MACHasher& hasher, ByteView header_cipher_text);
+    Bytes frame_mac(MACHasher& hasher, ByteView frame_cipher_text);
+    static Bytes serialize_frame_size(size_t size);
+    static size_t deserialize_frame_size(ByteView data);
 
     Bytes aes_secret_;
     Bytes mac_secret_;
@@ -105,11 +106,11 @@ void FramingCipherImpl::init_mac_hashers(
 }
 
 Bytes FramingCipherImpl::header_mac(MACHasher& hasher, ByteView header_cipher_text) {
-    assert(header_cipher_text.size() >= kAESBlockSize);
+    SILKWORM_ASSERT(header_cipher_text.size() >= kAESBlockSize);
 
     auto hash = hasher.hash();
     auto header_mac_seed = mac_seed_cipher_.encrypt(ByteView(hash.data(), kAESBlockSize));
-    crypto::xor_bytes(header_mac_seed, header_cipher_text);
+    xor_bytes(header_mac_seed, header_cipher_text);
     hasher.update(header_mac_seed);
 
     auto header_hash = hasher.hash();
@@ -122,7 +123,7 @@ Bytes FramingCipherImpl::frame_mac(MACHasher& hasher, ByteView frame_cipher_text
 
     auto hash = hasher.hash();
     auto frame_mac_seed = mac_seed_cipher_.encrypt(ByteView(hash.data(), kAESBlockSize));
-    crypto::xor_bytes(frame_mac_seed, hash);
+    xor_bytes(frame_mac_seed, hash);
     hasher.update(frame_mac_seed);
 
     auto header_hash = hasher.hash();
@@ -184,7 +185,7 @@ size_t FramingCipherImpl::decrypt_header(ByteView header_cipher_text, ByteView h
 }
 
 Bytes FramingCipherImpl::decrypt_frame(ByteView frame_cipher_text, ByteView frame_mac, size_t frame_size) {
-    assert(frame_cipher_text.size() >= frame_size);
+    SILKWORM_ASSERT(frame_cipher_text.size() >= frame_size);
 
     Bytes expected_frame_mac = this->frame_mac(ingress_mac_hasher_, frame_cipher_text);
     if (frame_mac != expected_frame_mac)
@@ -201,9 +202,7 @@ FramingCipher::FramingCipher(const KeyMaterial& key_material) {
     impl_ = std::make_unique<FramingCipherImpl>(key_material, aes_secret, mac_secret);
 }
 
-FramingCipher::~FramingCipher() {
-    assert(true);
-}
+FramingCipher::~FramingCipher() = default;
 
 FramingCipher::FramingCipher(FramingCipher&& other) noexcept
     : impl_(std::move(other.impl_)) {}
