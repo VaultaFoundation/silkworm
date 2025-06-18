@@ -88,7 +88,7 @@ jobs:
 
       - name: Install CMake from binary
         run: |
-          wget https://github.com/Kitware/CMake/releases/download/v3.27.9/cmake-3.27.9-linux-x86_64.tar.gz
+          curl -LO https://github.com/Kitware/CMake/releases/download/v3.27.9/cmake-3.27.9-linux-x86_64.tar.gz
           tar -xzf cmake-3.27.9-linux-x86_64.tar.gz
           sudo cp -r cmake-3.27.9-linux-x86_64/* /usr/local/
 
