@@ -25,9 +25,9 @@
 namespace silkworm::sentry::discovery {
 
 enum class NetworkId : uint64_t {
-    kMainnet = *kKnownChainNameToId.find("mainnet"sv),
-    kHolesky = *kKnownChainNameToId.find("holesky"sv),
-    kSepolia = *kKnownChainNameToId.find("sepolia"sv),
+    kMainnet = 1,
+    kHolesky = 17000,
+    kSepolia = 11155111,
 };
 
 // MainnetBootnodes are the enode URLs of the P2P bootstrap nodes running on

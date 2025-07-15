@@ -8,7 +8,10 @@ struct block_extra_data {
     std::optional<evmc::bytes32> consensus_parameter_index;
     std::optional<gas_prices> gasprices;
 
-    friend bool operator==(const block_extra_data&, const block_extra_data&) = default;
+    bool operator==(const block_extra_data& other) const noexcept {
+        return consensus_parameter_index == other.consensus_parameter_index &&
+            gasprices == other.gasprices;
+    }
 };
 
 } // namespace eosevm

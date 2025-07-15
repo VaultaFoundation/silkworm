@@ -82,7 +82,29 @@ struct BlockHeader {
     //! \see https://eips.ethereum.org/EIPS/eip-4844#gas-accounting
     std::optional<intx::uint256> blob_gas_price() const;
 
-    friend bool operator==(const BlockHeader&, const BlockHeader&) = default;
+    bool operator==(const BlockHeader& other) const noexcept {
+        return parent_hash == other.parent_hash &&
+            ommers_hash == other.ommers_hash &&
+            beneficiary == other.beneficiary &&
+            state_root == other.state_root &&
+            transactions_root == other.transactions_root &&
+            receipts_root == other.receipts_root &&
+            logs_bloom == other.logs_bloom &&
+            difficulty == other.difficulty &&
+            number == other.number &&
+            gas_limit == other.gas_limit &&
+            gas_used == other.gas_used &&
+            timestamp == other.timestamp &&
+            extra_data == other.extra_data &&
+            prev_randao == other.prev_randao &&
+            nonce == other.nonce &&
+            base_fee_per_gas == other.base_fee_per_gas &&
+            withdrawals_root == other.withdrawals_root &&
+            blob_gas_used == other.blob_gas_used &&
+            excess_blob_gas == other.excess_blob_gas &&
+            parent_beacon_block_root == other.parent_beacon_block_root &&
+            requests_hash == other.requests_hash;
+    }
 };
 
 struct BlockBody {
@@ -121,7 +143,12 @@ struct BlockBody {
         return eosevm_extra_data.value().gasprices;
     }
 
-    friend bool operator==(const BlockBody&, const BlockBody&) = default;
+    bool operator==(const BlockBody& other) const noexcept {
+        return transactions == other.transactions &&
+            ommers == other.ommers &&
+            withdrawals == other.withdrawals &&
+            eosevm_extra_data == other.eosevm_extra_data;
+    }
 };
 
 struct Block : public BlockBody {

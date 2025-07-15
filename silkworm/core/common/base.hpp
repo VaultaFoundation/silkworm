@@ -17,8 +17,6 @@
 #pragma once
 
 // The most common and basic macros, concepts, types, and constants.
-
-#include <concepts>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -38,9 +36,9 @@ namespace silkworm {
 
 using namespace std::string_view_literals;
 
-template <class T>
-concept UnsignedIntegral = std::unsigned_integral<T> || std::same_as<T, intx::uint128> ||
-                           std::same_as<T, intx::uint256> || std::same_as<T, intx::uint512>;
+template <typename T>
+constexpr bool UnsignedIntegral = (std::is_integral_v<T> && !std::is_signed_v<T> ) || std::is_same_v<T, intx::uint128>
+          || std::is_same_v<T, intx::uint256> || std::is_same_v<T, intx::uint512>;
 
 using TxnId = uint64_t;
 
@@ -48,7 +46,9 @@ struct TxnIdRange {
     TxnId start;
     TxnId end;
     TxnIdRange(TxnId start1, TxnId end1) : start(start1), end(end1) {}
-    friend bool operator==(const TxnIdRange&, const TxnIdRange&) = default;
+    friend bool operator==(const TxnIdRange& lhs, const TxnIdRange& rhs) {
+        return lhs.start == rhs.start && lhs.end == rhs.end;
+    }
     bool contains(TxnId num) const { return (start <= num) && (num < end); }
     bool contains_range(TxnIdRange range) const { return (start <= range.start) && (range.end <= end); }
     TxnId size() const { return end - start; }
@@ -61,7 +61,9 @@ struct BlockNumRange {
     BlockNum start;
     BlockNum end;
     BlockNumRange(BlockNum start1, BlockNum end1) : start(start1), end(end1) {}
-    friend bool operator==(const BlockNumRange&, const BlockNumRange&) = default;
+    friend bool operator==(const BlockNumRange& lhs, const BlockNumRange& rhs) {
+        return lhs.start == rhs.start && lhs.end == rhs.end;
+    }
     bool contains(BlockNum block_num) const { return (start <= block_num) && (block_num < end); }
     bool contains_range(BlockNumRange range) const { return (start <= range.start) && (range.end <= end); }
     BlockNum size() const { return end - start; }

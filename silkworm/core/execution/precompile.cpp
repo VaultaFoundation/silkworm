@@ -34,7 +34,7 @@
 #include <silkworm/core/crypto/ecdsa.h>
 #include <silkworm/core/crypto/secp256k1n.hpp>
 #include <silkworm/core/types/hash.hpp>
-
+#include <silkworm/core/protocol/intrinsic_gas.hpp>
 
 #if defined(ANTELOPE)
 namespace eosio {
@@ -72,7 +72,6 @@ namespace eosio {
 #include <libff/common/profiling.hpp>
 #pragma GCC diagnostic pop
 
-#include <silkworm/core/protocol/intrinsic_gas.hpp>
 #include <silkworm/core/common/endian.hpp>
 #include <evmone_precompiles/blake2b.hpp>
 #include <evmone_precompiles/kzg.hpp>
@@ -122,7 +121,7 @@ std::optional<Bytes> ecrec_run(ByteView input) noexcept {
 }
 
 uint64_t sha256_gas(ByteView input, evmc_revision) noexcept {
-    return 60 + 12 * num_words(input.length());
+    return 60 + 12 * silkworm::num_words(input.length());
 }
 
 std::optional<Bytes> sha256_run(ByteView input) noexcept {
@@ -139,7 +138,7 @@ std::optional<Bytes> sha256_run(ByteView input) noexcept {
 }
 
 uint64_t rip160_gas(ByteView input, evmc_revision) noexcept {
-    return 600 + 120 * num_words(input.length());
+    return 600 + 120 * silkworm::num_words(input.length());
 }
 
 std::optional<Bytes> rip160_run(ByteView input) noexcept {
@@ -157,7 +156,7 @@ std::optional<Bytes> rip160_run(ByteView input) noexcept {
 }
 
 uint64_t id_gas(ByteView input, evmc_revision) noexcept {
-    return 15 + 3 * num_words(input.length());
+    return 15 + 3 * silkworm::num_words(input.length());
 }
 
 std::optional<Bytes> id_run(ByteView input) noexcept {

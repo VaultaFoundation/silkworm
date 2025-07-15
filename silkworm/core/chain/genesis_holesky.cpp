@@ -2414,5 +2414,5 @@ constexpr char kGenesisHoleskyDataInternal[] = {
 0x74, 0x61, 0x6d, 0x70, 0x22, 0x3a, 0x22, 0x30, 0x78, 0x36, 0x35, 0x31, 0x35, 0x36, 0x39, 0x39,
 0x34, 0x22, 0x7d };
 namespace silkworm {
-constinit const std::string_view kGenesisHoleskyJson{&kGenesisHoleskyDataInternal[0], sizeof(kGenesisHoleskyDataInternal)};
+const std::string_view kGenesisHoleskyJson{&kGenesisHoleskyDataInternal[0], sizeof(kGenesisHoleskyDataInternal)};
 }

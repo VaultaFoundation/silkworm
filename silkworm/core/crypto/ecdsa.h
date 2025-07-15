@@ -40,8 +40,12 @@ enum {
 //! \param [in] recovery_id : the recovery id (0, 1, 2 or 3)
 //! \param [in] context: a pointer to an existing secp256k1 context
 //! \return Whether the recovery has succeeded
+#ifdef ANTELOPE
+bool silkworm_recover_address(uint8_t out[20], const uint8_t message[32], const uint8_t signature[64], uint8_t recovery_id);
+#else
 bool silkworm_recover_address(uint8_t out[20], const uint8_t message[32], const uint8_t signature[64],
                               uint8_t recovery_id, const secp256k1_context* context);
+#endif
 
 #if defined(__cplusplus)
 }

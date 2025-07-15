@@ -16,8 +16,6 @@
 
 #pragma once
 
-#include <magic_enum.hpp>
-
 #include <silkworm/core/common/bytes.hpp>
 #include <silkworm/core/rlp/decode.hpp>
 #include <silkworm/core/types/hash.hpp>
@@ -44,7 +42,7 @@ struct FlatRequests {
     ByteView preview_data_by_type(FlatRequestType type) const;
 
   private:
-    static constexpr size_t kTypesCount = magic_enum::enum_count<FlatRequestType>();
+    static constexpr size_t kTypesCount = 3;
     std::array<Bytes, kTypesCount> requests_;
 };
 

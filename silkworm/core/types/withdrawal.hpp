@@ -29,7 +29,12 @@ struct Withdrawal {
     evmc::address address{};
     uint64_t amount{0};  // in GWei
 
-    friend bool operator==(const Withdrawal&, const Withdrawal&) = default;
+    bool operator==(const Withdrawal& other) const noexcept {
+        return index == other.index &&
+            validator_index == other.validator_index &&
+            address == other.address &&
+            amount == other.amount;
+    }
 };
 
 namespace rlp {

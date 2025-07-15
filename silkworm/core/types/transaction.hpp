@@ -35,7 +35,9 @@ struct AccessListEntry {
     evmc::address account{};
     std::vector<evmc::bytes32> storage_keys{};
 
-    friend bool operator==(const AccessListEntry&, const AccessListEntry&) = default;
+    bool operator==(const AccessListEntry& other) const noexcept {
+        return account == other.account && storage_keys == other.storage_keys;
+    }
 };
 
 // EIP-7702 Authorization
@@ -47,7 +49,14 @@ struct Authorization {
     intx::uint256 r;
     intx::uint256 s;
 
-    friend bool operator==(const Authorization&, const Authorization&) = default;
+    bool operator==(const Authorization& other) const noexcept {
+        return chain_id == other.chain_id &&
+            address == other.address &&
+            nonce == other.nonce &&
+            v == other.v &&
+            r == other.r &&
+            s == other.s;
+    }
 };
 
 // EIP-2718 transaction type
@@ -96,7 +105,21 @@ struct UnsignedTransaction {
 
     void encode_for_signing(Bytes& into) const;
 
-    friend bool operator==(const UnsignedTransaction&, const UnsignedTransaction&) = default;
+    bool operator==(const UnsignedTransaction& other) const noexcept {
+        return type == other.type &&
+            chain_id == other.chain_id &&
+            nonce == other.nonce &&
+            max_priority_fee_per_gas == other.max_priority_fee_per_gas &&
+            max_fee_per_gas == other.max_fee_per_gas &&
+            gas_limit == other.gas_limit &&
+            to == other.to &&
+            value == other.value &&
+            data == other.data &&
+            access_list == other.access_list &&
+            max_fee_per_blob_gas == other.max_fee_per_blob_gas &&
+            blob_versioned_hashes == other.blob_versioned_hashes &&
+            authorizations == other.authorizations;
+    }
 };
 
 class Transaction : public UnsignedTransaction {

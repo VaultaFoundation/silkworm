@@ -24,12 +24,14 @@
 #include <silkworm/core/common/overloaded.hpp>
 #include <silkworm/core/types/address.hpp>
 #include <silkworm/core/types/evmc_bytes32.hpp>
+#include <silkworm/core/common/as_range.hpp>
 #include <eosevm/version.hpp>
 #include <silkworm/core/types/block.hpp>
 namespace silkworm {
 
 static constexpr const char* kTerminalTotalDifficulty{"terminalTotalDifficulty"};
 
+#ifndef ANTELOPE
 static void member_to_json(nlohmann::json& json, const std::string& key, const std::optional<uint64_t>& source) {
     if (source) {
         json[key] = source.value();
@@ -101,6 +103,7 @@ nlohmann::json ChainConfig::to_json() const noexcept {
 
     return ret;
 }
+#endif
 
 bool ChainConfig::valid_pre_merge_config() const noexcept {
     const bool has_pre_merge_config{!std::holds_alternative<protocol::NoPreMergeConfig>(rule_set_config)};
@@ -108,6 +111,7 @@ bool ChainConfig::valid_pre_merge_config() const noexcept {
     return has_pre_merge_config || has_merge_at_genesis;
 }
 
+#ifndef ANTELOPE
 std::optional<ChainConfig> ChainConfig::from_json(const nlohmann::json& json) noexcept {
     if (json.is_discarded() || !json.contains("chainId") || !json["chainId"].is_number()) {
         return std::nullopt;
@@ -189,6 +193,7 @@ std::optional<ChainConfig> ChainConfig::from_json(const nlohmann::json& json) no
     }
     return config;
 }
+#endif
 
 bool ChainConfig::withdrawals_activated(BlockTime block_time) const noexcept {
     return _shanghai_time && block_time >= _shanghai_time;
@@ -283,15 +288,18 @@ std::vector<uint64_t> ChainConfig::distinct_fork_points() const {
 
     std::vector<uint64_t> points;
     points.resize(block_nums.size() + times.size());
-    std::ranges::move(block_nums, points.begin());
-    std::ranges::move(times, points.begin() + (block_nums.end() - block_nums.begin()));
+    as_range::move(block_nums, points.begin());
+    as_range::move(times, points.begin() + (block_nums.end() - block_nums.begin()));
 
     return points;
 }
 
+#ifndef ANTELOPE
 std::ostream& operator<<(std::ostream& out, const ChainConfig& obj) { return out << obj.to_json(); }
+#endif
 
-constinit const ChainConfig kMainnetConfig{
+#ifndef ANTELOPE
+const ChainConfig kMainnetConfig{
     .chain_id = 1,
     ._homestead_block = 1'150'000,
     ._dao_block = 1'920'000,
@@ -312,7 +320,7 @@ constinit const ChainConfig kMainnetConfig{
     .rule_set_config = protocol::EthashConfig{},
 };
 
-constinit const ChainConfig kHoleskyConfig{
+const ChainConfig kHoleskyConfig{
     .chain_id = 17000,
     ._homestead_block = 0,
     ._tangerine_whistle_block = 0,
@@ -329,7 +337,7 @@ constinit const ChainConfig kHoleskyConfig{
     .rule_set_config = protocol::NoPreMergeConfig{},
 };
 
-constinit const ChainConfig kSepoliaConfig{
+const ChainConfig kSepoliaConfig{
     .chain_id = 11155111,
     ._homestead_block = 0,
     ._tangerine_whistle_block = 0,
@@ -364,7 +372,7 @@ to_str_literal(code)
 
 */
 
-constinit const ChainConfig kBorMainnetConfig{
+const ChainConfig kBorMainnetConfig{
     .chain_id = 137,
     ._homestead_block = 0,
     ._tangerine_whistle_block = 0,
@@ -841,7 +849,7 @@ constinit const ChainConfig kBorMainnetConfig{
     },
 };
 
-constinit const ChainConfig kAmoyConfig{
+const ChainConfig kAmoyConfig{
     .chain_id = 80002,
     ._homestead_block = 0,
     ._tangerine_whistle_block = 0,
@@ -1581,5 +1589,31 @@ constinit const ChainConfig kAmoyConfig{
         .agra_block = 73100,
     },
 };
+#endif
+
+std::optional<std::pair<const std::string, const ChainConfig*>> lookup_known_chain(const uint64_t chain_id) noexcept {
+    auto it{
+        as_range::find_if(kKnownChainConfigs, [&](const std::pair<ChainId, const ChainConfig*>& x) -> bool {
+            return x.second->chain_id == chain_id;
+        })};
+
+    if (it == kKnownChainConfigs.end()) {
+        if (chain_id == 0) return std::nullopt;
+
+        ChainConfig *_config = new ChainConfig(get_kEOSEVMConfigTemplate(chain_id));
+        kKnownChainConfigs.emplace_back(chain_id, _config);
+        kKnownChainNameToId.emplace_back("eosevm"sv, chain_id);
+        it = as_range::find_if(kKnownChainConfigs, [&](const std::pair<ChainId, const ChainConfig*>& x) -> bool {
+            return x.second->chain_id == chain_id;
+        });
+        SILKWORM_ASSERT(it != kKnownChainConfigs.end());
+    }
+    auto it2{
+        as_range::find_if(kKnownChainNameToId, [&](const std::pair<std::string_view, ChainId>& x) -> bool {
+            return x.second == it->first;
+        })};
+    SILKWORM_ASSERT(it2 != kKnownChainNameToId.end());
+    return std::make_pair(std::string{it2->first}, it->second);
+}
 
 }  // namespace silkworm

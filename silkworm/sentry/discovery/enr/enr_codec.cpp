@@ -48,7 +48,7 @@ static rlp::RlpBytes encode_rlp_bytes(ByteView bytes) {
     return rlp::RlpBytes{std::move(data)};
 }
 
-template <UnsignedIntegral T>
+template <typename T, std::enable_if_t<UnsignedIntegral<T>, int> = 1>
 static T decode_rlp_num_value(rlp::RlpByteView data, const char* key) {
     ByteView from = data.data;
     T value;
@@ -58,7 +58,7 @@ static T decode_rlp_num_value(rlp::RlpByteView data, const char* key) {
     return value;
 }
 
-template <UnsignedIntegral T>
+template <typename T, std::enable_if_t<UnsignedIntegral<T>, int> = 1>
 static rlp::RlpBytes encode_rlp_num_value(T value) {
     Bytes data;
     rlp::encode<T>(data, value);

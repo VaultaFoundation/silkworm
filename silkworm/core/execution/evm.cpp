@@ -200,7 +200,7 @@ evmc::Result EVM::create(const evmc_message& message) noexcept {
             evm_res.storage_gas_consumed = tmp_gas_state.storage_gas_consumed();
             evm_res.storage_gas_refund = tmp_gas_state.storage_gas_refund();
             state_.set_code(contract_addr, {evm_res.output_data, evm_res.output_size});
-	      } else if (std::cmp_greater_equal(evm_res.gas_left, code_deploy_gas)) {
+	      } else if (evm_res.gas_left >= 0 && static_cast<uint64_t>(evm_res.gas_left) >= code_deploy_gas) {
             evm_res.gas_left -= static_cast<int64_t>(code_deploy_gas);
             state_.set_code(contract_addr, {evm_res.output_data, evm_res.output_size});
         } else if (rev >= EVMC_HOMESTEAD) {
@@ -272,7 +272,7 @@ evmc::Result EVM::call(const evmc_message& msg) noexcept {
         const precompile::Contract& contract{precompile::kContracts[num]->contract};
         const ByteView input{message.input_data, message.input_size};
         const uint64_t gas{contract.gas(input, rev)};
-        if (std::cmp_greater(gas, message.gas)) {
+        if (message.gas < 0 || gas > static_cast<uint64_t>(message.gas)) {
             res.status_code = EVMC_OUT_OF_GAS;
         } else {
             const std::optional<Bytes> output{contract.run(input)};
@@ -587,7 +587,7 @@ evmc::bytes32 EVM::get_block_hash(int64_t block_num) noexcept {
     const uint64_t current_block_num{block_.header.number};
     SILKWORM_ASSERT(static_cast<uint64_t>(block_num) < current_block_num);
     const uint64_t new_size_u64{current_block_num - static_cast<uint64_t>(block_num)};
-    SILKWORM_ASSERT(std::in_range<size_t>(new_size_u64));
+    SILKWORM_ASSERT(new_size_u64 <= std::numeric_limits<size_t>::max());
     const size_t new_size{static_cast<size_t>(new_size_u64)};
 
     std::vector<evmc::bytes32>& hashes{block_hashes_};

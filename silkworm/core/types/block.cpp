@@ -23,13 +23,14 @@
 #include <silkworm/core/rlp/encode_vector.hpp>
 #include <silkworm/core/types/address.hpp>
 #include <silkworm/core/types/evmc_bytes32.hpp>
+#include <silkworm/core/common/cast.hpp>
 
 namespace silkworm {
 
 evmc::bytes32 BlockHeader::hash(bool for_sealing, bool exclude_extra_data_sig) const {
     Bytes rlp;
     rlp::encode(rlp, *this, for_sealing, exclude_extra_data_sig);
-    return std::bit_cast<evmc_bytes32>(keccak256(rlp));
+    return bit_cast<evmc_bytes32>(keccak256(rlp));
 }
 
 ethash::hash256 BlockHeader::boundary() const {

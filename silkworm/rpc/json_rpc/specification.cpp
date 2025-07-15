@@ -50310,5 +50310,5 @@ constexpr char kSpecificationDataInternal[] = {
 0x65, 0x61, 0x6e, 0x22, 0x7d, 0x7d, 0x7d, 0x5d, 0x2c, 0x22, 0x63, 0x6f, 0x6d, 0x70, 0x6f, 0x6e,
 0x65, 0x6e, 0x74, 0x73, 0x22, 0x3a, 0x7b, 0x7d, 0x7d };
 namespace silkworm::rpc::json_rpc {
-constinit const std::string_view kSpecificationJson{&kSpecificationDataInternal[0], sizeof(kSpecificationDataInternal)};
+const std::string_view kSpecificationJson{&kSpecificationDataInternal[0], sizeof(kSpecificationDataInternal)};
 }

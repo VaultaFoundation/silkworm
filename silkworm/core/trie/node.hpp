@@ -52,8 +52,13 @@ class Node {
 
     void set_root_hash(const std::optional<evmc::bytes32>& root_hash);
 
-    friend bool operator==(const Node&, const Node&) = default;
-
+    friend bool operator==(const Node& lhs, const Node& rhs) {
+        return lhs.state_mask_ == rhs.state_mask_ &&
+              lhs.tree_mask_ == rhs.tree_mask_ &&
+              lhs.hash_mask_ == rhs.hash_mask_ &&
+              lhs.hashes_ == rhs.hashes_ &&
+              lhs.root_hash_ == rhs.root_hash_;
+    }
     //! \see Erigon's MarshalTrieNodeTyped
     Bytes encode_for_storage() const;
 

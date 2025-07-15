@@ -97,7 +97,7 @@ ByteView to_big_compact(const intx::uint256& value);
 //! \return Success or kOverflow or kLeadingZero.
 //! \remarks A "compact" big endian form strips leftmost bytes valued to zero;
 //! if the input is not compact kLeadingZero is returned.
-template <UnsignedIntegral T>
+template <typename T, std::enable_if_t<UnsignedIntegral<T>, int> = 1>
 static DecodingResult from_big_compact(ByteView data, T& out) {
     if (data.length() > sizeof(T)) {
         return tl::unexpected{DecodingError::kOverflow};

@@ -15,9 +15,9 @@
 */
 
 #include "eip_7685_requests.hpp"
-
 #include <type_traits>
 
+#include <magic_enum.hpp>
 #include <silkworm/core/execution/precompile.hpp>
 #include <silkworm/core/protocol/param.hpp>
 #include <silkworm/core/rlp/decode_vector.hpp>

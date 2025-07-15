@@ -26,7 +26,9 @@
 
 #include <evmc/evmc.h>
 #include <intx/intx.hpp>
+#ifndef ANTELOPE
 #include <nlohmann/json.hpp>
+#endif
 
 #include <silkworm/core/common/base.hpp>
 #include <silkworm/core/common/small_map.hpp>
@@ -43,7 +45,9 @@ namespace protocol {
 
     // Already merged at genesis
     struct NoPreMergeConfig {
-        bool operator==(const NoPreMergeConfig&) const = default;
+        friend bool operator==(const NoPreMergeConfig&, const NoPreMergeConfig&) noexcept {
+            return true;
+        }
     };
 
     //! \see IRuleSet
@@ -208,7 +212,9 @@ struct ChainConfig {
     bool valid_pre_merge_config() const noexcept;
 
     //! \brief Return the JSON representation of this object
+    #ifndef ANTELOPE
     nlohmann::json to_json() const noexcept;
+    #endif
 
     /*Sample JSON input:
     {
@@ -227,9 +233,35 @@ struct ChainConfig {
     */
     //! \brief Try parse a JSON object into strongly typed ChainConfig
     //! \remark Should this return std::nullopt the parsing has failed
+    #ifndef ANTELOPE
     static std::optional<ChainConfig> from_json(const nlohmann::json& json) noexcept;
+    #endif
 
-    friend bool operator==(const ChainConfig&, const ChainConfig&) = default;
+    bool operator==(const ChainConfig& other) const noexcept {
+        return chain_id == other.chain_id &&
+            genesis_hash == other.genesis_hash &&
+            _homestead_block == other._homestead_block &&
+            _dao_block == other._dao_block &&
+            _tangerine_whistle_block == other._tangerine_whistle_block &&
+            _spurious_dragon_block == other._spurious_dragon_block &&
+            _byzantium_block == other._byzantium_block &&
+            _constantinople_block == other._constantinople_block &&
+            _petersburg_block == other._petersburg_block &&
+            _istanbul_block == other._istanbul_block &&
+            _muir_glacier_block == other._muir_glacier_block &&
+            _berlin_block == other._berlin_block &&
+            _london_block == other._london_block &&
+            burnt_contract == other.burnt_contract &&
+            _arrow_glacier_block == other._arrow_glacier_block &&
+            _gray_glacier_block == other._gray_glacier_block &&
+            _terminal_total_difficulty == other._terminal_total_difficulty &&
+            _merge_netsplit_block == other._merge_netsplit_block &&
+            _shanghai_time == other._shanghai_time &&
+            _cancun_time == other._cancun_time &&
+            _prague_time == other._prague_time &&
+            _version == other._version &&
+            rule_set_config == other.rule_set_config;
+    }
 };
 
 std::ostream& operator<<(std::ostream& out, const ChainConfig& obj);
@@ -249,44 +281,52 @@ inline constexpr ChainConfig get_kEOSEVMConfigTemplate(uint64_t _chain_id) {
     };
 }
 
-#if not defined(ANTELOPE)
+#ifndef ANTELOPE
 inline constexpr ChainConfig kEOSEVMMainnetConfig = get_kEOSEVMConfigTemplate(17777);
 #endif
 
 
 using namespace evmc::literals;
 
+#ifndef ANTELOPE
 inline constexpr evmc::bytes32 kMainnetGenesisHash{0xd4e56740f876aef8c010b86a40d5f56745a118d0906a34e69aec8c0db1cb8fa3_bytes32};
-constinit extern const ChainConfig kMainnetConfig;
+extern const ChainConfig kMainnetConfig;
 
 inline constexpr evmc::bytes32 kHoleskyGenesisHash{0xb5f7f912443c940f21fd611f12828d75b534364ed9e95ca4e307729a4661bde4_bytes32};
-constinit extern const ChainConfig kHoleskyConfig;
+extern const ChainConfig kHoleskyConfig;
 
 inline constexpr evmc::bytes32 kSepoliaGenesisHash{0x25a5cc106eea7138acab33231d7160d69cb777ee0c2c553fcddf5138993e6dd9_bytes32};
-constinit extern const ChainConfig kSepoliaConfig;
+extern const ChainConfig kSepoliaConfig;
 
 inline constexpr evmc::bytes32 kBorMainnetGenesisHash{0xa9c28ce2141b56c474f1dc504bee9b01eb1bd7d1a507580d5519d4437a97de1b_bytes32};
-constinit extern const ChainConfig kBorMainnetConfig;
+extern const ChainConfig kBorMainnetConfig;
 
 inline constexpr evmc::bytes32 kAmoyGenesisHash{0x7202b2b53c5a0836e773e319d18922cc756dd67432f9a1f65352b61f4406c697_bytes32};
-constinit extern const ChainConfig kAmoyConfig;
+extern const ChainConfig kAmoyConfig;
+#endif
 
 //! \brief Known chain names mapped to their respective chain IDs
-inline constexpr SmallMap<std::string_view, ChainId> kKnownChainNameToId{
+inline SmallMap<std::string_view, ChainId> kKnownChainNameToId{
+#ifndef ANTELOPE
     {"amoy"sv, 80002},
     {"bor-mainnet"sv, 137},
     {"holesky"sv, 17000},
     {"mainnet"sv, 1},
     {"sepolia"sv, 11155111},
+#endif
 };
 
 //! \brief Known chain IDs mapped to their respective chain configs
-inline constexpr SmallMap<ChainId, const ChainConfig*> kKnownChainConfigs{
+inline SmallMap<ChainId, const ChainConfig*> kKnownChainConfigs{
+#ifndef ANTELOPE
     {*kKnownChainNameToId.find("mainnet"sv), &kMainnetConfig},
     {*kKnownChainNameToId.find("amoy"sv), &kAmoyConfig},
     {*kKnownChainNameToId.find("bor-mainnet"sv), &kBorMainnetConfig},
     {*kKnownChainNameToId.find("holesky"sv), &kHoleskyConfig},
     {*kKnownChainNameToId.find("sepolia"sv), &kSepoliaConfig},
+#endif
 };
+
+std::optional<std::pair<const std::string, const ChainConfig*>> lookup_known_chain(const uint64_t chain_id) noexcept;
 
 }  // namespace silkworm

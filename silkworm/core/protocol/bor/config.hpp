@@ -20,7 +20,9 @@
 #include <string_view>
 
 #include <evmc/evmc.hpp>
+#ifndef ANTELOPE
 #include <nlohmann/json.hpp>
+#endif
 
 #include <silkworm/core/common/base.hpp>
 #include <silkworm/core/common/small_map.hpp>
@@ -42,11 +44,20 @@ struct Config {
 
     uint64_t sprint_size(BlockNum block_num) const noexcept;
 
+    #ifndef ANTELOPE
     nlohmann::json to_json() const noexcept;
 
     static std::optional<Config> from_json(const nlohmann::json& json) noexcept;
+    #endif
 
-    bool operator==(const Config&) const = default;
+    bool operator==(const Config& other) const noexcept {
+        return period == other.period &&
+            sprint == other.sprint &&
+            validator_contract == other.validator_contract &&
+            rewrite_code == other.rewrite_code &&
+            jaipur_block == other.jaipur_block &&
+            agra_block == other.agra_block;
+    }
 };
 
 // Looks up a config value as of a given block number.

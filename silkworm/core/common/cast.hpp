@@ -1,5 +1,5 @@
 /*
-   Copyright 2023 The Silkworm Authors
+   Copyright 2022 The Silkworm Authors
 
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
@@ -16,8 +16,25 @@
 
 #pragma once
 
+// Utilities for type casting
+
+#include <cstring>
 #include <string_view>
+#include <type_traits>
+
+#include <silkworm/core/common/base.hpp>
 
 namespace silkworm {
-extern const std::string_view kGenesisMainnetJson;
+
+// Backport of C++20 std::bit_cast
+// https://en.cppreference.com/w/cpp/numeric/bit_cast
+template <class To, class From>
+typename std::enable_if_t<
+    sizeof(To) == sizeof(From) && std::is_trivially_copyable_v<From> && std::is_trivially_copyable_v<To>, To>
+bit_cast(const From& src) noexcept {
+    To dst;
+    std::memcpy(&dst, &src, sizeof(To));
+    return dst;
 }
+
+}  // namespace silkworm

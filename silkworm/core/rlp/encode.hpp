@@ -39,7 +39,7 @@ void encode_header(Bytes& to, Header header);
 
 void encode(Bytes& to, ByteView str);
 
-template <UnsignedIntegral T>
+template <typename T, std::enable_if_t<UnsignedIntegral<T>, int> = 1>
 void encode(Bytes& to, const T& n) {
     if (n == 0) {
         to.push_back(kEmptyStringCode);
@@ -58,7 +58,7 @@ size_t length_of_length(uint64_t payload_length) noexcept;
 
 size_t length(ByteView) noexcept;
 
-template <UnsignedIntegral T>
+template <typename T, std::enable_if_t<UnsignedIntegral<T>, int> = 1>
 size_t length(const T& n) noexcept {
     if (n < kEmptyStringCode) {
         return 1;

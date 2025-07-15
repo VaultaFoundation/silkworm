@@ -18,19 +18,54 @@
 
 #include <algorithm>
 #include <array>
-#include <concepts>
 #include <initializer_list>
 #include <iterator>
 #include <map>
 #include <utility>
+#include <type_traits>
 
 #include <silkworm/core/common/assert.hpp>
+
+template <typename T, typename = void>
+struct is_totally_ordered : std::false_type {};
+
+template <typename T>
+struct is_totally_ordered<T, std::void_t<
+    // Check for comparison operators
+    decltype(std::declval<T>() < std::declval<T>()),
+    decltype(std::declval<T>() > std::declval<T>()),
+    decltype(std::declval<T>() <= std::declval<T>()),
+    decltype(std::declval<T>() >= std::declval<T>()),
+    decltype(std::declval<T>() == std::declval<T>()),
+    decltype(std::declval<T>() != std::declval<T>())
+>> : std::true_type {};
+
+template <typename T, typename = void>
+struct is_equality_comparable : std::false_type {};
+
+template <typename T>
+struct is_equality_comparable<T, std::void_t<
+    decltype(std::declval<T>() == std::declval<T>()),
+    decltype(std::declval<T>() != std::declval<T>())
+>> : std::true_type {};
+
+namespace silkworm {
+// Forward declaration of SmallMap to allow self-referential types
+template <typename Key, typename T, size_t maximum_size>
+class SmallMap;
+}
+
+// Specialize is_equality_comparable for SmallMap
+template <typename Key, typename T, size_t maximum_size>
+struct is_equality_comparable<silkworm::SmallMap<Key, T, maximum_size>> : is_equality_comparable<T> {};
 
 namespace silkworm {
 
 // SmallMap is a constexpr-friendly immutable map suitable for a small number of elements.
-template <std::totally_ordered Key, std::default_initializable T, size_t maximum_size = 8>
+template <typename Key, typename T, size_t maximum_size = 8>
 class SmallMap {
+    static_assert(is_totally_ordered<Key>::value, "Key type must support total ordering (comparison operators).");
+    static_assert(std::is_default_constructible<T>::value, "T type must be default constructible.");
   public:
     using ValueType = std::pair<Key, T>;
 
@@ -44,7 +79,7 @@ class SmallMap {
         sort();
     }
 
-    template <std::input_iterator InputIt>
+    template <typename InputIt, typename = std::enable_if_t<std::is_base_of_v<std::input_iterator_tag, typename std::iterator_traits<InputIt>::iterator_category>>>
     constexpr SmallMap(InputIt first, InputIt last) {
         for (InputIt it{first}; it != last; ++it) {
             SILKWORM_ASSERT(size_ < maximum_size);
@@ -99,13 +134,20 @@ class SmallMap {
         return nullptr;
     }
 
-    template <std::constructible_from<Key> NewKeyType = Key>
+    template <typename NewKeyType = Key, typename = std::enable_if_t<std::is_constructible_v<NewKeyType, Key>>>
     std::map<NewKeyType, T> to_std_map() const {
         std::map<NewKeyType, T> ret;
         for (const auto& [key, val] : *this) {
             ret[NewKeyType(key)] = val;
         }
         return ret;
+    }
+
+    template <typename... Args>
+    constexpr void emplace_back(const Key& key, Args&&... args) {
+        SILKWORM_ASSERT(size_ < maximum_size);
+        data_[size_++] = ValueType{key, T{std::forward<Args>(args)...}};
+        sort();
     }
 
   private:
@@ -118,7 +160,9 @@ class SmallMap {
     size_t size_{0};
 };
 
-template <std::totally_ordered Key, std::equality_comparable T>
+template <typename Key, typename T,
+          typename = std::enable_if_t<is_totally_ordered<Key>::value>,
+          typename = std::enable_if_t<is_equality_comparable<T>::value>>
 constexpr bool operator==(const SmallMap<Key, T>& a, const SmallMap<Key, T>& b) {
     return std::equal(a.begin(), a.end(), b.begin(), b.end());
 }

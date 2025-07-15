@@ -27,7 +27,7 @@ using namespace evmc::literals;
 namespace silkworm {
 
 TEST_CASE("Known configs") {
-    static_assert(kKnownChainConfigs.size() == kKnownChainNameToId.size());
+    REQUIRE(kKnownChainConfigs.size() == kKnownChainNameToId.size());
     for (const auto& [_, id] : kKnownChainNameToId) {
         const auto config{kKnownChainConfigs.find(id)};
         REQUIRE(config);

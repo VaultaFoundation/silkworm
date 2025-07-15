@@ -20,7 +20,9 @@
 namespace silkworm::protocol {
 //! \see EthashRuleSet
 struct TrustConfig {
-    bool operator==(const TrustConfig&) const = default;
+    friend bool operator==(const TrustConfig&, const TrustConfig&) noexcept {
+        return true;
+    }
 };
 
 }  // namespace silkworm::protocol

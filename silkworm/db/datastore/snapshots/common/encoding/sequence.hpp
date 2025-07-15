@@ -27,7 +27,7 @@
 
 namespace silkworm::snapshots::encoding {
 
-template <UnsignedIntegral T>
+template <typename T, std::enable_if_t<UnsignedIntegral<T>, int> = 1>
 using UnsignedIntegralSequence = std::vector<T>;
 
 //! Max integer sequence length capped at hard limit to fit in memory
@@ -36,7 +36,7 @@ inline constexpr size_t kMaxUnsignedIntegralSequenceSize{15 * kMebi};
 using Uint32Sequence = UnsignedIntegralSequence<uint32_t>;
 using Uint64Sequence = UnsignedIntegralSequence<uint64_t>;
 
-template <UnsignedIntegral T>
+template <typename T, std::enable_if_t<UnsignedIntegral<T>, int> = 1>
 std::ostream& operator<<(std::ostream& os, const UnsignedIntegralSequence<T>& s) {
     // Serialize the integer sequence size using 8-bytes
     const uint64_t size = s.size();
@@ -49,7 +49,7 @@ std::ostream& operator<<(std::ostream& os, const UnsignedIntegralSequence<T>& s)
     return os;
 }
 
-template <UnsignedIntegral T>
+template <typename T, std::enable_if_t<UnsignedIntegral<T>, int> = 1>
 std::istream& operator>>(std::istream& is, UnsignedIntegralSequence<T>& s) {
     // Deserialize the integer sequence size using 8-bytes
     Bytes buffer(sizeof(uint64_t), '\0');

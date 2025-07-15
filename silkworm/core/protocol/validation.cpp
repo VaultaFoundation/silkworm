@@ -13,7 +13,6 @@
    See the License for the specific language governing permissions and
    limitations under the License.
 */
-
 #include "validation.hpp"
 
 #include <bit>
@@ -23,6 +22,7 @@
 #include <silkworm/core/execution/evm.hpp>
 #include <silkworm/core/rlp/encode_vector.hpp>
 #include <silkworm/core/trie/vector_root.hpp>
+#include <silkworm/core/common/cast.hpp>
 #include <eosevm/version.hpp>
 
 #include "intrinsic_gas.hpp"
@@ -331,7 +331,7 @@ evmc::bytes32 compute_ommers_hash(const BlockBody& body) {
 
     Bytes ommers_rlp;
     rlp::encode(ommers_rlp, body.ommers);
-    return std::bit_cast<evmc_bytes32>(keccak256(ommers_rlp));
+    return bit_cast<evmc_bytes32>(keccak256(ommers_rlp));
 }
 
 ValidationResult validate_requests_root(const BlockHeader& header, const std::vector<Log>& logs, EVM& evm) {

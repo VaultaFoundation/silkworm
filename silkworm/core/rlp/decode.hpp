@@ -45,7 +45,7 @@ tl::expected<Header, DecodingError> decode_header(ByteView& from) noexcept;
 
 DecodingResult decode(ByteView& from, Bytes& to, Leftover mode = Leftover::kProhibit) noexcept;
 
-template <UnsignedIntegral T>
+template <typename T, std::enable_if_t<UnsignedIntegral<T>, int> = 1>
 DecodingResult decode(ByteView& from, T& to, Leftover mode = Leftover::kProhibit) noexcept {
     const auto h{decode_header(from)};
     if (!h) {

@@ -39,7 +39,13 @@ struct Account {
     //! \brief Serialize the account into its Recursive-Length Prefix (RLP) representation
     Bytes rlp(const evmc::bytes32& storage_root) const;
 
-    friend bool operator==(const Account&, const Account&) = default;
+    bool operator==(const Account& other) const noexcept {
+        return nonce == other.nonce &&
+            balance == other.balance &&
+            code_hash == other.code_hash &&
+            incarnation == other.incarnation &&
+            previous_incarnation == other.previous_incarnation;
+    }
 };
 
 }  // namespace silkworm

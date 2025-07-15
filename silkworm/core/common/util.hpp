@@ -15,11 +15,13 @@
 */
 
 #pragma once
-
+#include <endian.h>
 #include <cmath>
 #include <cstring>
 #include <iomanip>
+#ifndef ANTELOPE
 #include <iostream>
+#endif
 #include <optional>
 #include <regex>
 #include <string_view>
@@ -34,11 +36,13 @@
 // intx does not include operator<< overloading for uint<N>
 namespace intx {
 
+#ifndef ANTELOPE
 template <unsigned N>
 inline std::ostream& operator<<(std::ostream& out, const uint<N>& value) {
     out << "0x" << intx::hex(value);
     return out;
 }
+#endif
 
 }  // namespace intx
 
@@ -77,12 +81,20 @@ inline bool is_valid_address(std::string_view s) {
     return is_valid_hex(s);
 }
 
+inline evmc::address to_evmc_address(ByteView bytes) {
+    evmc::address out;
+    if (!bytes.empty()) {
+        size_t n{std::min(bytes.length(), kAddressLength)};
+        std::memcpy(out.bytes + kAddressLength - n, bytes.data(), n);
+    }
+    return out;
+}
+
 //! \brief Returns a string representing the hex form of provided string of bytes
 std::string to_hex(ByteView bytes, bool with_prefix = false);
 
 //! \brief Returns a string representing the hex form of provided integral
-template <typename T>
-    requires(std::is_integral_v<T> && std::is_unsigned_v<T>)
+template <typename T, typename = std::enable_if_t<std::is_integral_v<T> && std::is_unsigned_v<T>>>
 std::string to_hex(T value, bool with_prefix = false) {
     uint8_t bytes[sizeof(T)];
     intx::be::store(bytes, value);
@@ -116,7 +128,7 @@ size_t prefix_length(ByteView a, ByteView b);
 inline ethash::hash256 keccak256(ByteView view) { return ethash::keccak256(view.data(), view.size()); }
 
 //! \brief Create an intx::uint256 from a string supporting both fixed decimal and scientific notation
-template <UnsignedIntegral Int>
+template <typename Int, std::enable_if_t<UnsignedIntegral<Int>, int> = 1>
 constexpr Int from_string_sci(const char* str) {
     auto s = str;
     auto m = Int{};

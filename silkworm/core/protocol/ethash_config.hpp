@@ -15,8 +15,11 @@
 */
 
 #pragma once
+#include <optional>
 
+#ifndef ANTELOPE
 #include <nlohmann/json.hpp>
+#endif
 
 namespace silkworm::protocol {
 
@@ -24,11 +27,15 @@ namespace silkworm::protocol {
 struct EthashConfig {
     bool validate_seal{true};
 
+    #ifndef ANTELOPE
     nlohmann::json to_json() const noexcept;
 
     static std::optional<EthashConfig> from_json(const nlohmann::json& json) noexcept;
+    #endif
 
-    bool operator==(const EthashConfig&) const = default;
+    bool operator==(const EthashConfig& other) const noexcept {
+        return validate_seal == other.validate_seal;
+    }
 };
 
 }  // namespace silkworm::protocol

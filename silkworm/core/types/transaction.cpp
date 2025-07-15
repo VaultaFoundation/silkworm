@@ -27,6 +27,7 @@
 #include <silkworm/core/rlp/encode_vector.hpp>
 #include <silkworm/core/types/address.hpp>
 #include <silkworm/core/types/evmc_bytes32.hpp>
+#include <silkworm/core/common/cast.hpp>
 
 #include "y_parity_and_chain_id.hpp"
 
@@ -51,7 +52,7 @@ evmc::bytes32 Transaction::hash() const {
     hash_computed_.call_once([this]() {
         Bytes rlp;
         rlp::encode(rlp, *this, /*wrap_eip2718_into_string=*/false);
-        cached_hash_ = std::bit_cast<evmc_bytes32>(keccak256(rlp));
+        cached_hash_ = bit_cast<evmc_bytes32>(keccak256(rlp));
     });
     return cached_hash_;
 }
@@ -464,7 +465,7 @@ std::optional<evmc::address> Transaction::sender() const {
 
         sender_ = evmc::address{};
         #if defined(ANTELOPE)
-        if (!silkworm_recover_address(from->bytes, hash.bytes, signature, odd_y_parity)) {
+        if (!silkworm_recover_address(sender_->bytes, hash.bytes, signature, odd_y_parity)) {
             sender_ = std::nullopt;
         }
         #else

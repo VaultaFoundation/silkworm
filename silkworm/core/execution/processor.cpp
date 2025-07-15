@@ -22,8 +22,8 @@
 #include <silkworm/core/protocol/intrinsic_gas.hpp>
 #include <silkworm/core/protocol/param.hpp>
 #include <silkworm/core/trie/vector_root.hpp>
+#include <silkworm/core/common/as_range.hpp>
 #include <evmone/refund.hpp>
-
 namespace silkworm {
 
 evmc::Result to_result(const CallResult& r) {
@@ -83,14 +83,17 @@ namespace {
         SILKWORM_ASSERT(state.filtered_messages() == receipt.filtered_messages);
 
         for (const auto& entry : state_diff.modified_accounts) {
-            if (std::ranges::find(state_diff.deleted_accounts, entry.addr) != state_diff.deleted_accounts.end()) {
+            if (as_range::find(state_diff.deleted_accounts, entry.addr) != state_diff.deleted_accounts.end()) {
                 continue;
             }
 
             for (const auto& [k, v] : entry.modified_storage) {
                 auto expected = state.get_current_storage(entry.addr, k);
                 if (v != expected) {
+                    #ifndef ANTELOPE
                     std::cerr << "k: " << hex(k) << "e1: " << hex(v) << ", silkworm: " << hex(expected) << "\n";
+                    #endif
+                    SILKWORM_ASSERT(v == expected);
                 }
             } 
         }
@@ -98,13 +101,15 @@ namespace {
             SILKWORM_ASSERT(!state.exists(a));
         }
         for (const auto& m : state_diff.modified_accounts) {
-            if (std::ranges::find(state_diff.deleted_accounts, m.addr) != state_diff.deleted_accounts.end()) {
+            if (as_range::find(state_diff.deleted_accounts, m.addr) != state_diff.deleted_accounts.end()) {
                 continue;
             }
 
             SILKWORM_ASSERT(state.get_nonce(m.addr) == m.nonce);
             if (m.balance != state.get_balance(m.addr)) {
+                #ifndef ANTELOPE
                 std::cerr << "b: " << hex(m.addr) << " " << to_string(m.balance) << ", silkworm: " << to_string(state.get_balance(m.addr)) << "\n";
+                #endif
                 SILKWORM_ASSERT(state.get_balance(m.addr) == m.balance);
             }
             if (!m.code.empty()) {
@@ -467,7 +472,7 @@ ValidationResult ExecutionProcessor::execute_block_no_post_validation(std::vecto
     std::vector<Log> logs;
     logs.reserve(receipts.size());
     for (const auto& receipt : receipts) {
-        std::ranges::copy(receipt.logs, std::back_inserter(logs));
+        std::copy(receipt.logs.begin(), receipt.logs.end(), std::back_inserter(logs));
     }
     state_.clear_journal_and_substate();
     const auto finalization_result = rule_set_.finalize(state_, block, evm_, logs);

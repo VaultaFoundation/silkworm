@@ -24,11 +24,6 @@
 
 namespace silkworm::trie {
 
-bool operator==(const Node& a, const Node& b) {
-    return a.state_mask_ == b.state_mask_ && a.tree_mask_ == b.tree_mask_ && a.hash_mask_ == b.hash_mask_ &&
-           a.hashes_ == b.hashes_ && a.root_hash_ == b.root_hash_;
-}
-
 Node::Node(uint16_t state_mask, uint16_t tree_mask, uint16_t hash_mask, std::vector<evmc::bytes32> hashes,
            const std::optional<evmc::bytes32>& root_hash)
     : state_mask_{state_mask},

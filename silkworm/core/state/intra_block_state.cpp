@@ -20,7 +20,7 @@
 
 #include <silkworm/core/common/empty_hashes.hpp>
 #include <silkworm/core/common/util.hpp>
-
+#include <silkworm/core/common/cast.hpp>
 namespace silkworm {
 
 const state::Object* IntraBlockState::get_object(const evmc::address& address) const noexcept {
@@ -54,7 +54,6 @@ state::Object* IntraBlockState::get_object(const evmc::address& address) noexcep
 
 state::Object& IntraBlockState::get_or_create_object(const evmc::address& address) noexcept {
     auto* obj{get_object(address)};
-
     if (obj == nullptr) {
         journal_.emplace_back(std::make_unique<state::CreateDelta>(address));
         if(is_reserved_address(address))
@@ -246,7 +245,7 @@ evmc::bytes32 IntraBlockState::get_code_hash(const evmc::address& address) const
 void IntraBlockState::set_code(const evmc::address& address, ByteView code) noexcept {
     auto& obj{get_or_create_object(address)};
     journal_.emplace_back(std::make_unique<state::UpdateDelta>(address, obj));
-    obj.current->code_hash = std::bit_cast<evmc_bytes32>(keccak256(code));
+    obj.current->code_hash = bit_cast<evmc_bytes32>(keccak256(code));
 
     // Don't overwrite already existing code so that views of it
     // that were previously returned by get_code() are still valid.

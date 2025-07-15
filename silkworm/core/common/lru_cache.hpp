@@ -62,7 +62,7 @@ template <typename key_t, typename value_t>
 class LruCache {
   public:
     using key_value_pair_t = std::pair<key_t, value_t>;
-    using list_iterator_t = std::list<key_value_pair_t>::iterator;
+    using list_iterator_t = typename std::list<key_value_pair_t>::iterator;
 
     explicit LruCache(size_t max_size, bool thread_safe = false) : max_size_(max_size), thread_safe_(thread_safe) {}
     LruCache(const LruCache&) = default;

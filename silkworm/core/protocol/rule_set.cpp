@@ -20,6 +20,7 @@
 
 #include <silkworm/core/common/empty_hashes.hpp>
 #include <silkworm/core/common/overloaded.hpp>
+#include <silkworm/core/common/as_range.hpp>
 
 #include "bor_rule_set.hpp"
 #include "ethash_rule_set.hpp"
@@ -112,7 +113,7 @@ ValidationResult RuleSet::validate_ommers(const Block& block, const BlockState& 
             return ValidationResult::kNotAnOmmer;
         }
 
-        if (std::ranges::find(old_ommers, ommer) != old_ommers.end()) {
+        if (as_range::find(old_ommers, ommer) != old_ommers.end()) {
             return ValidationResult::kDuplicateOmmer;
         }
     }
@@ -265,12 +266,12 @@ void RuleSet::add_fee_transfer_log(IntraBlockState&, const intx::uint256&, const
 }
 
 static RuleSetPtr pre_merge_rule_set(const ChainConfig& chain_config) {
-    return std::visit<RuleSetPtr>(
+    return std::visit(
         Overloaded{
-            [&](const protocol::TrustConfig&) { return std::make_unique<TrustRuleSet>(chain_config); },
-            [&](const NoPreMergeConfig&) { return nullptr; },
-            [&](const EthashConfig&) { return std::make_unique<EthashRuleSet>(chain_config); },
-            [&](const bor::Config&) { return std::make_unique<BorRuleSet>(chain_config); },
+            [&](const protocol::TrustConfig&) -> RuleSetPtr { return std::make_unique<TrustRuleSet>(chain_config); },
+            [&](const NoPreMergeConfig&) -> RuleSetPtr { return RuleSetPtr{nullptr}; },
+            [&](const EthashConfig&) -> RuleSetPtr { return std::make_unique<EthashRuleSet>(chain_config); },
+            [&](const bor::Config&) -> RuleSetPtr { return std::make_unique<BorRuleSet>(chain_config); }
         },
         chain_config.rule_set_config);
 }

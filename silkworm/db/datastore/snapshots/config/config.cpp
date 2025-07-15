@@ -29,7 +29,7 @@
 
 namespace silkworm::snapshots {
 
-inline constexpr SmallMap<ChainId, std::span<const Entry>> kKnownConfigGeneratedEntries{
+inline SmallMap<ChainId, std::span<const Entry>> kKnownConfigGeneratedEntries{
     {*kKnownChainNameToId.find("mainnet"sv), {kMainnetSnapshots.data(), kMainnetSnapshots.size()}},
     {*kKnownChainNameToId.find("sepolia"sv), {kSepoliaSnapshots.data(), kSepoliaSnapshots.size()}},
     {*kKnownChainNameToId.find("holesky"sv), {kHoleskySnapshots.data(), kHoleskySnapshots.size()}},

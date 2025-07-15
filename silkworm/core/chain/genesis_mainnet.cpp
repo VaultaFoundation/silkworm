@@ -44316,5 +44316,5 @@ constexpr char kGenesisMainnetDataInternal[] = {
 0x2c, 0x22, 0x74, 0x69, 0x6d, 0x65, 0x73, 0x74, 0x61, 0x6d, 0x70, 0x22, 0x3a, 0x22, 0x30, 0x78,
 0x30, 0x30, 0x22, 0x7d };
 namespace silkworm {
-constinit const std::string_view kGenesisMainnetJson{&kGenesisMainnetDataInternal[0], sizeof(kGenesisMainnetDataInternal)};
+const std::string_view kGenesisMainnetJson{&kGenesisMainnetDataInternal[0], sizeof(kGenesisMainnetDataInternal)};
 }
