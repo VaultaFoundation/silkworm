@@ -200,7 +200,6 @@ evmc::Result EVM::create(const evmc_message& message) noexcept {
             assert(tmp_gas_state.speculative_cpu_gas_consumed() == emv_res.speculative_cpu_gas_consumed);
             evm_res.storage_gas_consumed = tmp_gas_state.storage_gas_consumed();
             evm_res.storage_gas_refund = tmp_gas_state.storage_gas_refund();
-            state_.set_code(contract_addr, {evm_res.output_data, evm_res.output_size});
         } else if (evm_res.gas_left >= 0 && static_cast<uint64_t>(evm_res.gas_left) >= code_deploy_gas) {
             evm_res.gas_left -= static_cast<int64_t>(code_deploy_gas);
             state_.set_code(contract_addr, {evm_res.output_data, evm_res.output_size});
